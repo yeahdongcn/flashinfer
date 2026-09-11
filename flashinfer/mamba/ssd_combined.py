@@ -688,6 +688,19 @@ class SSDCombined:
             )
 
         if x.device.type == "musa":
+            if update_seq_chunk_cumsum and chunk_indices is not None and chunk_offsets is not None:
+                if seq_idx is None:
+                    raise ValueError("update_seq_chunk_cumsum requires seq_idx")
+                if seq_chunk_cumsum is None:
+                    raise ValueError("update_seq_chunk_cumsum requires an output tensor")
+                from .musa_seq_chunk import seq_chunk_cumsum as musa_seq_chunk_cumsum
+
+                flat_seq_idx = seq_idx.reshape(1, -1).contiguous()
+                num_seqs = seq_chunk_cumsum.numel() - 1
+                musa_seq_chunk_cumsum(
+                    flat_seq_idx, chunk_indices, chunk_offsets, self.chunk_size,
+                    num_seqs, out=seq_chunk_cumsum,
+                )
             from .musa_reference import ssd_combined_fwd_musa_reference
 
             if chunk_indices is not None or chunk_offsets is not None:
@@ -1055,6 +1068,19 @@ def ssd_combined_fwd(
     # MUSA path is a reference recurrence with the same public API; it is the
     # correctness anchor for the native S5000 SSD implementation.
     if x.device.type == "musa":
+        if update_seq_chunk_cumsum and chunk_indices is not None and chunk_offsets is not None:
+            if seq_idx is None:
+                raise ValueError("update_seq_chunk_cumsum requires seq_idx")
+            if seq_chunk_cumsum is None:
+                raise ValueError("update_seq_chunk_cumsum requires an output tensor")
+            from .musa_seq_chunk import seq_chunk_cumsum as musa_seq_chunk_cumsum
+
+            flat_seq_idx = seq_idx.reshape(1, -1).contiguous()
+            num_seqs = seq_chunk_cumsum.numel() - 1
+            musa_seq_chunk_cumsum(
+                flat_seq_idx, chunk_indices, chunk_offsets, 128,
+                num_seqs, out=seq_chunk_cumsum,
+            )
         if chunk_indices is not None or chunk_offsets is not None:
             if seq_idx is None:
                 raise ValueError("chunk metadata requires seq_idx on MUSA SSD")
