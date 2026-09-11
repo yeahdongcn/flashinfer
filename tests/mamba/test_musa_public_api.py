@@ -30,7 +30,8 @@ def _ssu_inputs(batch=1, steps=None):
     return x, dt, A, B, C, D_skip
 
 
-def test_selective_state_update_stochastic_rounding():
+@pytest.mark.parametrize("algorithm", ["auto", "simple", "vertical", "horizontal"])
+def test_selective_state_update_stochastic_rounding(algorithm):
     x, dt, A, B, C, D_skip = _ssu_inputs()
     state = torch.zeros(8, H, D, N, device=DEVICE, dtype=torch.float16)
     slot = torch.tensor([3], device=DEVICE, dtype=torch.int32)
@@ -47,6 +48,7 @@ def test_selective_state_update_stochastic_rounding():
         state_batch_indices=slot,
         rand_seed=seed,
         philox_rounds=5,
+        algorithm=algorithm,
     )
 
     assert y.shape == x.shape

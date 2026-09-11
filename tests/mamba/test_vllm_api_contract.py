@@ -24,6 +24,10 @@ def test_ssu_has_vllm_dispatch_keywords():
         "cache_steps",
         "cu_seqlens",
         "num_accepted_tokens",
+        "algorithm",
+        "backend",
+        "state_scale",
+        "intermediate_state_scales",
     ):
         assert name in names
 
