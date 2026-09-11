@@ -718,7 +718,7 @@ class SSDCombined:
                 native_out.copy_(
                     token_out.view(
                         x.shape[0], x.shape[1] // self.chunk_size,
-                        x.shape[2], x.shape[3],
+                        self.chunk_size, x.shape[2], x.shape[3],
                     ).permute(0, 2, 3, 1, 2)
                 )
                 result = (native_out, result[1])
