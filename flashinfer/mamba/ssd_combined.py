@@ -25,19 +25,35 @@ import functools
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import cutlass
-import cutlass.cute as cute
-import cutlass.torch as cutlass_torch
-import cuda.bindings.driver as cuda_drv
 import torch
-from cutlass import Int32
-from cutlass.base_dsl.compiler import GenerateLineInfo  # profiling
+
+try:
+    import cutlass
+    import cutlass.cute as cute
+    import cutlass.torch as cutlass_torch
+    import cuda.bindings.driver as cuda_drv
+    from cutlass import Int32
+    from cutlass.base_dsl.compiler import GenerateLineInfo  # profiling
+    from .ssd_kernel import SSDKernel
+
+    _CUTE_SSD_AVAILABLE = True
+except ImportError:
+    # CuTe/CUDA are optional until the CUDA backend is actually selected.  A
+    # MUSA installation must be able to import this module so it can dispatch
+    # to the MUSA SSD provider without shipping NVIDIA's CuTe packages.
+    cutlass = None
+    cute = None
+    cutlass_torch = None
+    cuda_drv = None
+    Int32 = None
+    GenerateLineInfo = None
+    SSDKernel = None
+    _CUTE_SSD_AVAILABLE = False
 
 from ..api_logging import flashinfer_api
 from ..jit.mamba.seq_chunk_cumsum import gen_seq_chunk_cumsum_module
 from ..trace.templates.mamba import ssd_combined_trace_dispatch
 from ..triton.kernels.ssd_chunk_state import chunk_cumsum_fwd
-from .ssd_kernel import SSDKernel
 
 
 @functools.cache
