@@ -54,6 +54,9 @@ def test_varlen_ssd_matches_vllm_positional_prefix():
         "dt_limit",
         "return_intermediate_states",
         "state_dtype",
+        "checkpoint_token_indices",
+        "checkpoint_state_slots",
+        "checkpoint_states",
     ]
     names = list(inspect.signature(ssd_combined_fwd_varlen).parameters)
     assert names == expected
