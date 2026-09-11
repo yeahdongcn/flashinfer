@@ -311,6 +311,10 @@ def selective_state_update(
     # is deliberately a correctness scaffold; the native MUSA kernel will keep
     # this exact call boundary when it lands.
     if state.device.type == "musa":
+        if algorithm not in ("auto", "simple"):
+            raise NotImplementedError(
+                f"MUSA SSU reference provider does not implement algorithm={algorithm!r}"
+            )
         from .musa_reference import selective_state_update_musa_reference
 
         return selective_state_update_musa_reference(
