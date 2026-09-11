@@ -148,7 +148,8 @@ def selective_state_update_musa_reference(
         if state_slot < 0 or state_slot >= slots:
             raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
         if state.dtype == torch.int16:
-            scale = value.abs().amax(dim=-1).clamp_min(torch.finfo(torch.float32).tiny) / 32767
+            amax = value.abs().amax(dim=-1)
+            scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)
             state[state_slot].copy_(round_integer(value / scale[..., None]).clamp(-32768, 32767).to(torch.int16))
             state_scale[state_slot].copy_(scale.to(state_scale.dtype))
         else:
@@ -250,6 +251,7 @@ def selective_state_update_musa_reference(
                 out[batch_idx, h].copy_(y_t.to(out.dtype))
         return running
 
+    is_spec_decoding = num_accepted_tokens is not None
     for b, (start, end) in enumerate(steps):
         accepted = (
             max(int(num_accepted_tokens[b].item()) - 1, 0)
@@ -266,7 +268,7 @@ def selective_state_update_musa_reference(
                 read_slot,
                 running_override=running if token > 0 else None,
             )
-            if dst_state_batch_indices is not None or (not is_mtp and not is_varlen):
+            if is_spec_decoding or (not is_mtp and not is_varlen):
                 write_slot = _index_for(dst_state_batch_indices, b, token, read_slot)
                 write_state(write_slot, running)
                 read_slot = write_slot
@@ -279,7 +281,8 @@ def selective_state_update_musa_reference(
                 if intermediate_states_buffer.dtype == torch.int16:
                     if intermediate_state_scales is None:
                         raise ValueError("int16 intermediate state requires scales")
-                    scale = running.abs().amax(dim=-1).clamp_min(torch.finfo(torch.float32).tiny) / 32767
+                    amax = running.abs().amax(dim=-1)
+                    scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)
                     intermediate_states_buffer[cache_slot, token].copy_(
                         round_integer(running / scale[..., None]).clamp(-32768, 32767).to(torch.int16)
                     )
@@ -288,17 +291,14 @@ def selective_state_update_musa_reference(
                     intermediate_states_buffer[cache_slot, token].copy_(
                         cast_state(running, intermediate_states_buffer.dtype)
                     )
-        if (
+        if not disable_state_update and not is_mtp and is_varlen and not is_spec_decoding:
+            final_slot = _index_for(dst_state_batch_indices, b, 0, read_slot)
+            write_state(final_slot, running)
+        elif (
             not disable_state_update
-            and not is_mtp
-            and is_varlen
+            and is_mtp
             and dst_state_batch_indices is None
-            or (
-                not disable_state_update
-                and is_mtp
-                and dst_state_batch_indices is None
-                and intermediate_states_buffer is None
-            )
+            and intermediate_states_buffer is None
         ):
             write_state(read_slot, running)
     return out
@@ -707,17 +707,23 @@ def checkpointing_ssu_musa_reference(
         for offset in range(accepted + predicted):
             ring = (start + offset) % ring_len
             if offset < accepted:
-                x_t = x_cache[slot, :, ring].to(torch.float32)
-                dt_t = dt_cache[slot, :, ring].to(torch.float32)
-                b_t = b_cache[slot, :, ring].to(torch.float32)
+                if slot == pad_slot_id:
+                    x_t = torch.zeros(heads, dim, dtype=torch.float32, device=x.device)
+                    dt_t = torch.zeros(heads, dtype=torch.float32, device=x.device)
+                    b_t = torch.zeros(groups, dstate, dtype=torch.float32, device=x.device)
+                else:
+                    x_t = x_cache[slot, :, ring].to(torch.float32)
+                    dt_t = dt_cache[slot, :, ring].to(torch.float32)
+                    b_t = b_cache[slot, :, ring].to(torch.float32)
             else:
                 token = offset - accepted
                 x_t = x[request, token].to(torch.float32)
                 dt_t = dt[request, token].to(torch.float32)
                 b_t = B[request, token].to(torch.float32)
-                x_cache[slot, :, ring].copy_(x[request, token])
-                dt_cache[slot, :, ring].copy_(dt[request, token])
-                b_cache[slot, :, ring].copy_(B[request, token])
+                if slot != pad_slot_id:
+                    x_cache[slot, :, ring].copy_(x[request, token])
+                    dt_cache[slot, :, ring].copy_(dt[request, token])
+                    b_cache[slot, :, ring].copy_(B[request, token])
             if bias is not None:
                 dt_t = dt_t + bias
             if dt_softplus:
