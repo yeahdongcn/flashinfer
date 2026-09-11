@@ -60,6 +60,23 @@ def test_selective_state_update_stochastic_rounding(algorithm):
     assert torch.any(state[slot] != 0)
 
 
+def test_selective_state_update_philox_reproducibility():
+    x, dt, A, B, C, D_skip = _ssu_inputs()
+    seed = torch.tensor([987], device=DEVICE, dtype=torch.int64)
+    slot = torch.tensor([2], device=DEVICE, dtype=torch.int32)
+    state_a = torch.zeros(8, H, D, N, device=DEVICE, dtype=torch.float16)
+    state_b = torch.zeros_like(state_a)
+    selective_state_update(
+        state_a, x, dt, A, B, C, D=D_skip, state_batch_indices=slot,
+        rand_seed=seed, philox_rounds=5,
+    )
+    selective_state_update(
+        state_b, x, dt, A, B, C, D=D_skip, state_batch_indices=slot,
+        rand_seed=seed, philox_rounds=5,
+    )
+    torch.testing.assert_close(state_a, state_b, rtol=0, atol=0)
+
+
 def test_selective_state_update_mtp_replay_with_intermediate_states():
     steps = 3
     x, dt, A, B, C, D_skip = _ssu_inputs(steps=steps)
