@@ -73,6 +73,8 @@ def selective_state_update_musa_reference(
     """
     if state.dtype not in (torch.int16, torch.float16, torch.bfloat16, torch.float32):
         raise NotImplementedError("MUSA SSU supports int16/fp16/bf16/fp32 state")
+    if D is not None and D.dtype != dt.dtype:
+        raise ValueError("D must have the same dtype as dt")
     if state.dtype == torch.int16 and state_scale is None:
         raise ValueError("int16 state requires state_scale")
     if state.dtype != torch.int16 and state_scale is not None:
