@@ -88,7 +88,7 @@ class TestSelectiveStateUpdate:
                 inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
                 inputs["slot_idx"], state_scale=inputs.get("state_scale"),
             )
-            return (y_ref, state_ref, scale_ref) if "state_scale" in inputs else (y_ref, state_ref)
+            return (y_ref, state_ref, scale_ref) if inputs.get("state_scale") is not None else (y_ref, state_ref)
         state_ref = inputs["state_cache"].clone()
         y_ref = selective_state_update_triton(
             state_ref,
@@ -398,7 +398,7 @@ class TestSelectiveStateUpdateNonContiguous(TestSelectiveStateUpdate):
                 inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
                 inputs["slot_idx"], state_scale=inputs.get("state_scale"),
             )
-            return (y_ref, state_ref, scale_ref) if "state_scale" in inputs else (y_ref, state_ref)
+            return (y_ref, state_ref, scale_ref) if inputs.get("state_scale") is not None else (y_ref, state_ref)
         state_ref = clone_preserving_strides(inputs["state_cache"])
         y_ref = selective_state_update_triton(
             state_ref,
