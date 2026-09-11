@@ -242,6 +242,32 @@ def test_ssd_checkpoint_token_and_slot_on_musa():
     assert torch.any(checkpoint != 0)
 
 
+def test_ssd_matches_independent_eager_recurrence_on_musa():
+    batch, seqlen = 1, 3
+    x = torch.randn(batch, seqlen, H, D, device=DEVICE, dtype=torch.bfloat16)
+    dt = torch.randn(batch, seqlen, H, device=DEVICE, dtype=torch.float32)
+    A = -torch.rand(H, device=DEVICE, dtype=torch.float32) - 1
+    B = torch.randn(batch, seqlen, G, N, device=DEVICE, dtype=torch.bfloat16)
+    C = torch.randn_like(B)
+    out, final = ssd_combined_fwd(x, dt, A, B, C)
+    state = torch.zeros(batch, H, D, N, device=DEVICE, dtype=torch.float32)
+    expected = torch.empty(batch, seqlen, H, D, device=DEVICE, dtype=torch.float32)
+    for token in range(seqlen):
+        delta = torch.nn.functional.softplus(dt[:, token])
+        state = state * torch.exp(A[None, :, None, None] * delta[:, :, None, None])
+        for head in range(H):
+            state[:, head] += (
+                delta[:, head, None, None]
+                * x[:, token, head].to(torch.float32)[:, :, None]
+                * B[:, token, 0].to(torch.float32)[:, None, :]
+            )
+            expected[:, token, head] = torch.sum(
+                C[:, token, 0].to(torch.float32)[:, None, :] * state[:, head], dim=-1
+            )
+    torch.testing.assert_close(out.to(torch.float32), expected, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(final.to(torch.float32), state, rtol=2e-2, atol=2e-2)
+
+
 def test_ssd_update_seq_chunk_cumsum_on_musa():
     x = torch.randn(1, 4, H, D, device=DEVICE, dtype=torch.bfloat16)
     dt = torch.randn(1, 4, H, device=DEVICE, dtype=torch.float32)
