@@ -6,12 +6,14 @@ import flashinfer
 from flashinfer.utils import get_compute_capability, is_cvt_rs_supported
 
 from .triton_reference.selective_state_update import selective_state_update_triton
-from .utils import create_test_inputs, clone_preserving_strides
+from .utils import TEST_DEVICE, create_test_inputs, clone_preserving_strides
 
 
 def _get_algorithms():
     """Return list of algorithms supported on the current GPU."""
-    major, _ = get_compute_capability(torch.device("cuda"))
+    if TEST_DEVICE == "musa":
+        return ["simple"]
+    major, _ = get_compute_capability(torch.device(TEST_DEVICE))
     algos = ["simple"]
     if major >= 9:
         algos.extend(["vertical", "horizontal"])
@@ -188,7 +190,7 @@ class TestSelectiveStateUpdate:
 
         # Prepare output tensor if requested
         if use_out_tensor:
-            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device="cuda")
+            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device=TEST_DEVICE)
         else:
             out = None
 
@@ -303,7 +305,7 @@ class TestSelectiveStateUpdateDisableStateUpdate(TestSelectiveStateUpdate):
 
         # Prepare output tensor if requested
         if use_out_tensor:
-            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device="cuda")
+            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device=TEST_DEVICE)
         else:
             out = None
 
@@ -611,7 +613,7 @@ class TestSelectiveStateUpdateInt16(TestSelectiveStateUpdate):
         y_ref, state_ref, state_scale_ref = self.make_reference_output(inputs)
 
         if use_out_tensor:
-            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device="cuda")
+            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device=TEST_DEVICE)
         else:
             out = None
 
@@ -632,8 +634,10 @@ class TestSelectiveStateUpdateInt16(TestSelectiveStateUpdate):
 
 
 def _get_algorithms_no_horizontal():
+    if TEST_DEVICE == "musa":
+        return ["simple"]
     """Return algorithms that support stochastic rounding (no horizontal)."""
-    major, _ = get_compute_capability(torch.device("cuda"))
+    major, _ = get_compute_capability(torch.device(TEST_DEVICE))
     algos = ["simple"]
     if major >= 9:
         algos.append("vertical")
@@ -646,7 +650,7 @@ class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
     ATOL = 0.001
     RTOL = 0.01
 
-    RAND_SEED = torch.tensor(42, dtype=torch.int64, device="cuda")
+    RAND_SEED = torch.tensor(42, dtype=torch.int64, device=TEST_DEVICE)
 
     def make_inputs(self, batch, nheads, dim, dstate, _state_dtype, weight_dtype):
         """Create test inputs with fp16 state."""
@@ -671,7 +675,7 @@ class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
         # on unsupported GPUs the Triton reference falls back to regular
         # rounding while the CUDA kernel still exercises its software
         # stochastic rounding path.
-        rand_seed = self.RAND_SEED if is_cvt_rs_supported() else None
+        rand_seed = self.RAND_SEED if TEST_DEVICE == "musa" or is_cvt_rs_supported() else None
         y_ref = selective_state_update_triton(
             state_ref,
             inputs["x"],
@@ -868,7 +872,7 @@ class TestSelectiveStateUpdateVariousNgroups(TestSelectiveStateUpdate):
         y_ref, state_ref = self.make_reference_output(inputs)
 
         if use_out_tensor:
-            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device="cuda")
+            out = torch.empty(batch, nheads, dim, dtype=self.INPUT_DTYPE, device=TEST_DEVICE)
         else:
             out = None
 

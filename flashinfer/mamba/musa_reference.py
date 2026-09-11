@@ -77,6 +77,14 @@ def selective_state_update_musa_reference(
         raise ValueError("int16 state requires state_scale")
     if state.dtype != torch.int16 and state_scale is not None:
         raise ValueError("state_scale is only valid for int16 state")
+    if state_scale is not None and state_scale.dim() == 4 and state_scale.shape[-1] == 1:
+        state_scale = state_scale.squeeze(-1)
+    if (
+        intermediate_state_scales is not None
+        and intermediate_state_scales.dim() == 5
+        and intermediate_state_scales.shape[-1] == 1
+    ):
+        intermediate_state_scales = intermediate_state_scales.squeeze(-1)
 
     if state.dim() != 4:
         raise ValueError(f"state must be [slots, heads, dim, dstate], got {state.shape}")

@@ -294,13 +294,15 @@ def canonicalize_torch_dtype(dtype: Union[torch.dtype, str]) -> torch.dtype:
 
 @functools.cache
 def get_device_properties(device: torch.device):
+    if device.type == "musa":
+        return torch.musa.get_device_properties(device)
     return torch.cuda.get_device_properties(device)
 
 
 @functools.cache
 def get_compute_capability(device: torch.device) -> Tuple[int, int]:
-    if device.type != "cuda":
-        raise ValueError("device must be a cuda device")
+    if device.type not in ("cuda", "musa"):
+        raise ValueError("device must be a cuda or musa device")
     properties = get_device_properties(device)
     return properties.major, properties.minor
 
