@@ -1229,7 +1229,7 @@ class TestSelectiveStateUpdateMTPStochasticRounding(TestSelectiveStateUpdateMTP)
         # on unsupported GPUs the Triton reference falls back to regular
         # rounding while the CUDA kernel still exercises its software
         # stochastic rounding path.
-        rand_seed = self.RAND_SEED if is_cvt_rs_supported() else None
+        rand_seed = self.RAND_SEED if is_cvt_rs_supported(torch.device(TEST_DEVICE)) else None
         y_ref = selective_state_update_triton(
             state_ref,
             inputs["x"],
@@ -1299,6 +1299,11 @@ class TestSelectiveStateUpdateMTPStochasticRounding(TestSelectiveStateUpdateMTP)
         (  64,    64,     64,   64,    4,           torch.float16,  torch.float32,  True ),  # dstate=64
         (  64,    64,     64,   96,    4,           torch.float16,  torch.float32,  True ),  # dstate=96 (odd stateValuesPerThread)
     )
+    if TEST_DEVICE == "musa":
+        _SR_PARAMS = (
+            (2, 8, 8, 16, 3, torch.float16, torch.float32, True),
+            (2, 8, 8, 8, 3, torch.float16, torch.float32, True),
+        )
     # fmt: on
 
     @pytest.mark.parametrize(
@@ -1366,7 +1371,7 @@ class TestSelectiveStateUpdateMTPStochasticRoundingWithIntermediateStates(
         # on unsupported GPUs the Triton reference falls back to regular
         # rounding while the CUDA kernel still exercises its software
         # stochastic rounding path.
-        rand_seed = self.RAND_SEED if is_cvt_rs_supported() else None
+        rand_seed = self.RAND_SEED if is_cvt_rs_supported(torch.device(TEST_DEVICE)) else None
 
         y_ref = selective_state_update_triton(
             state_ref,
@@ -1420,6 +1425,10 @@ class TestSelectiveStateUpdateMTPStochasticRoundingWithIntermediateStates(
         (  64,    64,     64,   64,    4,           torch.float16,  torch.float32,  True ),  # dstate=64
         (  64,    64,     64,   96,    4,           torch.float16,  torch.float32,  True ),  # dstate=96 (odd stateValuesPerThread)
     )
+    if TEST_DEVICE == "musa":
+        _SR_INTERMEDIATE_PARAMS = (
+            (2, 8, 8, 16, 3, torch.float16, torch.float32, True),
+        )
     # fmt: on
 
     @pytest.mark.parametrize(
