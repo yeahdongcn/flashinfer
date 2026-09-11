@@ -1994,6 +1994,7 @@ def test_fp16_state_dtype():
 
 
 @pytest.mark.xfail(
+    condition=TEST_DEVICE != "musa",
     reason="state_dtype=float32 not yet supported (only float16/bfloat16)",
     strict=True,
 )
