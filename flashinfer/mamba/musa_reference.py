@@ -405,6 +405,7 @@ def ssd_combined_fwd_varlen_musa_reference(
     dt_limit: tuple[float, float] = (0.0, float("inf")),
     initial_states: Optional[torch.Tensor] = None,
     return_intermediate_states: bool = False,
+    state_dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
     """Packed/varlen SSD API matching vLLM's Mamba2 prefill contract."""
     if x.dim() != 3 or dt.dim() != 2 or B.dim() != 3 or C.dim() != 3:
@@ -432,10 +433,10 @@ def ssd_combined_fwd_varlen_musa_reference(
             dstate,
         ):
             raise ValueError("initial_states must be [num_sequences, heads, headdim, dstate]")
-        state_dtype = initial_states.dtype
+        state_dtype = state_dtype or initial_states.dtype
         initial = initial_states.to(torch.float32)
     else:
-        state_dtype = torch.float32
+        state_dtype = state_dtype or torch.float32
         initial = None
 
     if D is not None:

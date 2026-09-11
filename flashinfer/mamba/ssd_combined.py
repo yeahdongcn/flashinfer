@@ -1079,14 +1079,15 @@ def ssd_combined_fwd_varlen(
     cu_chunk_seqlens: torch.Tensor,
     last_chunk_indices: torch.Tensor,
     seq_idx: torch.Tensor,
+    out: torch.Tensor,
     D: Optional[torch.Tensor] = None,
     z: Optional[torch.Tensor] = None,
     dt_bias: Optional[torch.Tensor] = None,
     dt_softplus: bool = False,
     dt_limit: tuple[float, float] = (0.0, float("inf")),
     initial_states: Optional[torch.Tensor] = None,
-    out: Optional[torch.Tensor] = None,
     return_intermediate_states: bool = False,
+    state_dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
     """Packed SSD API matching vLLM's Mamba2 varlen prefill contract.
 
@@ -1119,4 +1120,9 @@ def ssd_combined_fwd_varlen(
         dt_limit=dt_limit,
         initial_states=initial_states,
         return_intermediate_states=return_intermediate_states,
+        state_dtype=state_dtype,
     )
+
+
+# Compatibility spelling used by vLLM's Mamba2 mixer.
+mamba_chunk_scan_combined_varlen = ssd_combined_fwd_varlen
