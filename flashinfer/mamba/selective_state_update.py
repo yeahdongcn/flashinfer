@@ -305,6 +305,40 @@ def selective_state_update(
     else:
         output = out
 
+    # MUSA has a separate provider boundary.  Do not send MUSA tensors through
+    # the CUDA JIT module: its launchers include CUDA runtime headers and its
+    # architecture dispatch is NVIDIA-SM specific.  The initial MUSA provider
+    # is deliberately a correctness scaffold; the native MUSA kernel will keep
+    # this exact call boundary when it lands.
+    if state.device.type == "musa":
+        from .musa_reference import selective_state_update_musa_reference
+
+        return selective_state_update_musa_reference(
+            state,
+            x,
+            dt,
+            A,
+            B,
+            C,
+            D,
+            z,
+            dt_bias,
+            dt_softplus,
+            state_batch_indices,
+            dst_state_batch_indices,
+            pad_slot_id,
+            output,
+            disable_state_update,
+            intermediate_states_buffer,
+            intermediate_state_indices,
+            state_scale,
+            intermediate_state_scales,
+            rand_seed,
+            cache_steps,
+            cu_seqlens,
+            num_accepted_tokens,
+        )
+
     # Determine stateIndex dtype from index tensors, default to int32
     stateIndex_dtype = torch.int32
     if state_batch_indices is not None:
