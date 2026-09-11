@@ -76,7 +76,6 @@ def test_replayssm_materialize_musa_dependency_path():
         pad_slot_id=-1,
         rand_seed=None,
         philox_rounds=10,
-        state_scale_ptrs=None,
         state_dtype=torch.float32,
     )
     assert torch.isfinite(state).all()
