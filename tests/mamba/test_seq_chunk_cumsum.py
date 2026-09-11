@@ -6,7 +6,6 @@ ranges for varlen parallelization.
 """
 
 import torch
-import pytest
 
 from .utils import TEST_DEVICE
 
