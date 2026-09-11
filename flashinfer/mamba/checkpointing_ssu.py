@@ -896,6 +896,35 @@ def checkpointing_ssu(
     out : torch.Tensor
         Output tensor, shape (batch, T, nheads, dim).
     """
+    if state.device.type == "musa":
+        from .musa_reference import checkpointing_ssu_musa_reference
+
+        if cu_seqlens is not None:
+            raise NotImplementedError("MUSA checkpointing_ssu varlen path is not implemented")
+        return checkpointing_ssu_musa_reference(
+            state,
+            x_cache,
+            B_cache,
+            dt_cache,
+            ring_start,
+            prev_num_accepted_tokens,
+            x,
+            dt,
+            A,
+            B,
+            C,
+            out,
+            D=D,
+            z=z,
+            dt_bias=dt_bias,
+            dt_softplus=dt_softplus,
+            state_batch_indices=state_batch_indices,
+            pad_slot_id=pad_slot_id,
+            state_scale=state_scale,
+            rand_seed=rand_seed,
+            philox_rounds=philox_rounds,
+        )
+
     # Validate quantized state ↔ state_scale combo.
     # int8 and fp8_e4m3fn use a per-(cache, head, dim) decode-scale tensor
     # (QUANT_MAX = 127 and 448 respectively).  Non-quantized dtypes must NOT

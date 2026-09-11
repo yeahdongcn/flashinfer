@@ -572,3 +572,169 @@ def ssd_combined_fwd_varlen_musa_reference(
     if return_intermediate_states:
         return states
     return states.index_select(0, last_chunk_indices.to(torch.int64))
+
+
+def replayssm_materialize_musa_reference(
+    dependency_inputs: list[torch.Tensor],
+    dependency_outputs: list[torch.Tensor],
+    src_slots: torch.Tensor,
+    dst_slots: torch.Tensor,
+    ring_start: torch.Tensor,
+    replay_prefix_len: torch.Tensor,
+    active_request_indices: torch.Tensor,
+    *,
+    heads_per_group: int,
+    max_window: int,
+    ring_buffer_len: int,
+    pad_slot_id: int,
+    rand_seed: Optional[torch.Tensor],
+    philox_rounds: int,
+    state_scale_ptrs: torch.Tensor,
+    state_dtype: torch.dtype,
+) -> None:
+    """Reference ReplaySSM materialization for MUSA.
+
+    Pointer tables are opaque on Python, so the public MUSA path requires the
+    same dependency tensors that the CUDA graph path keeps alive.  Inputs are
+    ordered as ``[x_cache, B_cache, dt_cache, A]`` and outputs are state tensors
+    ordered by layer, matching the existing test helper.
+    """
+    if len(dependency_inputs) % 4 != 0 or not dependency_outputs:
+        raise ValueError("MUSA ReplaySSM dependency lists have invalid layout")
+    layers = len(dependency_inputs) // 4
+    if len(dependency_outputs) != layers:
+        raise ValueError("one state output is required per ReplaySSM layer")
+    if src_slots.shape[0] != layers or dst_slots.shape != src_slots.shape:
+        raise ValueError("slot tables must have shape [layers, batch]")
+    batch = src_slots.shape[1]
+    active = active_request_indices.to(torch.int64).flatten().tolist()
+    active = [i for i in active if i >= 0]
+    if active and max(active) >= batch:
+        raise ValueError("active request index is outside the slot table")
+    for layer in range(layers):
+        x_cache = dependency_inputs[layer]
+        b_cache = dependency_inputs[layers + layer]
+        dt_cache = dependency_inputs[2 * layers + layer]
+        a = dependency_inputs[3 * layers + layer].to(torch.float32)
+        state = dependency_outputs[layer]
+        if x_cache.dim() < 4 or b_cache.dim() < 4 or dt_cache.dim() < 3:
+            raise ValueError("ReplaySSM cache tensors have invalid rank")
+        heads = state.shape[1]
+        dim, dstate = state.shape[-2:]
+        groups = b_cache.shape[1]
+        if heads != groups * heads_per_group or a.shape[0] != heads:
+            raise ValueError("ReplaySSM head/group dimensions are inconsistent")
+        for request in active:
+            src = int(src_slots[layer, request].item())
+            dst = int(dst_slots[layer, request].item())
+            if src == pad_slot_id or dst == pad_slot_id:
+                continue
+            start = int(ring_start[request].item())
+            prefix = int(replay_prefix_len[request].item())
+            if not (0 <= start < ring_buffer_len and 0 <= prefix <= max_window):
+                raise ValueError("ReplaySSM ring metadata is outside its declared bounds")
+            running = state[src].to(torch.float32).clone()
+            if state.dtype == torch.int8:
+                scale_table = dependency_outputs[layer]
+                del scale_table
+                raise NotImplementedError(
+                    "MUSA ReplaySSM int8 state requires explicit scale tensors"
+                )
+            for offset in range(prefix):
+                ring = (start + offset) % ring_buffer_len
+                for head in range(heads):
+                    group = head // heads_per_group
+                    delta = dt_cache[src, head, ring].to(torch.float32)
+                    decay = torch.exp(a[head] * delta)
+                    x_t = x_cache[src, head, ring].to(torch.float32)
+                    b_t = b_cache[src, group, ring].to(torch.float32)
+                    running[head] = running[head] * decay
+                    running[head] += (delta * x_t)[:, None] * b_t[None, :]
+            state[dst].copy_(running.to(state_dtype))
+
+
+def checkpointing_ssu_musa_reference(
+    state: torch.Tensor,
+    x_cache: torch.Tensor,
+    b_cache: torch.Tensor,
+    dt_cache: torch.Tensor,
+    ring_start: torch.Tensor,
+    prev_num_accepted_tokens: torch.Tensor,
+    x: torch.Tensor,
+    dt: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    out: torch.Tensor,
+    *,
+    D: Optional[torch.Tensor],
+    z: Optional[torch.Tensor],
+    dt_bias: Optional[torch.Tensor],
+    dt_softplus: bool,
+    state_batch_indices: Optional[torch.Tensor],
+    pad_slot_id: int,
+    state_scale: Optional[torch.Tensor],
+    rand_seed: Optional[torch.Tensor],
+    philox_rounds: int,
+) -> torch.Tensor:
+    """Reference checkpointing SSU for MUSA ring-cache bring-up."""
+    if x.dim() != 4 or dt.dim() != 3:
+        raise ValueError("checkpointing SSU expects x [batch,T,H,D] and dt [batch,T,H]")
+    batch, predicted, heads, dim = x.shape
+    slots, state_heads, state_dim, dstate = state.shape
+    if state_heads != heads or state_dim != dim:
+        raise ValueError("checkpointing state and x head dimensions differ")
+    if x_cache.shape[1:] != (heads, x_cache.shape[2], dim):
+        raise ValueError("x_cache must be [slots, heads, ring, dim]")
+    groups = B.shape[2] if B.dim() == 4 else B.shape[1]
+    if heads % groups:
+        raise ValueError("heads must be divisible by groups")
+    ratio = heads // groups
+    ring_len = x_cache.shape[2]
+    out.zero_()
+    A_f = A.to(torch.float32)
+    bias = None if dt_bias is None else dt_bias.to(torch.float32)
+    for request in range(batch):
+        slot = int(state_batch_indices[request].item()) if state_batch_indices is not None else request
+        if slot == pad_slot_id:
+            running = torch.zeros(heads, dim, dstate, dtype=torch.float32, device=x.device)
+        else:
+            running = state[slot].to(torch.float32).clone()
+        start = int(ring_start[request].item())
+        accepted = int(prev_num_accepted_tokens[request].item())
+        for offset in range(accepted + predicted):
+            ring = (start + offset) % ring_len
+            if offset < accepted:
+                x_t = x_cache[slot, :, ring].to(torch.float32)
+                dt_t = dt_cache[slot, :, ring].to(torch.float32)
+                b_t = b_cache[slot, :, ring].to(torch.float32)
+            else:
+                token = offset - accepted
+                x_t = x[request, token].to(torch.float32)
+                dt_t = dt[request, token].to(torch.float32)
+                b_t = B[request, token].to(torch.float32)
+                x_cache[slot, :, ring].copy_(x[request, token])
+                dt_cache[slot, :, ring].copy_(dt[request, token])
+                b_cache[slot, :, ring].copy_(B[request, token])
+            if bias is not None:
+                dt_t = dt_t + bias
+            if dt_softplus:
+                dt_t = _softplus(dt_t)
+            for head in range(heads):
+                group = head // ratio
+                running[head] = running[head] * torch.exp(A_f[head] * dt_t[head])
+                running[head] += (dt_t[head] * x_t[head])[:, None] * b_t[group][None, :]
+            if offset >= accepted:
+                token = offset - accepted
+                for head in range(heads):
+                    group = head // ratio
+                    y = torch.sum(C[request, token, group].to(torch.float32)[None, :] * running[head], dim=-1)
+                    if D is not None:
+                        y = y + D[head].to(torch.float32) * x[request, token].to(torch.float32)
+                    if z is not None:
+                        z_t = z[request, token, head].to(torch.float32)
+                        y = y * z_t * torch.sigmoid(z_t)
+                    out[request, token, head].copy_(y.to(out.dtype))
+        if slot != pad_slot_id:
+            state[slot].copy_(running.to(state.dtype))
+    return out
