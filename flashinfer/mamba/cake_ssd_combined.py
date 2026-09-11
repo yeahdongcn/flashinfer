@@ -735,7 +735,7 @@ class CakeSSDCombined:
                     A,
                     B,
                     C,
-                    self.chunk_size,
+                    self._chunk_size,
                     cu_seqlens,
                     cu_chunk_seqlens,
                     last,
