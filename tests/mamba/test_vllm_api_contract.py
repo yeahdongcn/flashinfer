@@ -7,6 +7,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from flashinfer.mamba import (  # noqa: E402
+    CakeSSDCombined,
     mamba_chunk_scan_combined_varlen,
     selective_state_update,
     ssd_combined_fwd_varlen,
@@ -57,3 +58,7 @@ def test_varlen_ssd_matches_vllm_positional_prefix():
     names = list(inspect.signature(ssd_combined_fwd_varlen).parameters)
     assert names == expected
     assert mamba_chunk_scan_combined_varlen is ssd_combined_fwd_varlen
+
+
+def test_cake_ssd_public_symbol_is_available():
+    assert callable(CakeSSDCombined)
