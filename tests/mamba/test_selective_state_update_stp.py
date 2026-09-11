@@ -58,8 +58,9 @@ class TestSelectiveStateUpdate:
     """Test class for selective state update kernels."""
 
     # Test configuration
-    ATOL = 3e-3 if TEST_DEVICE == "musa" else 1e-3
-    RTOL = 3e-2 if TEST_DEVICE == "musa" else 1e-2
+    # BF16 output quantization on MUSA is one ulp at roughly 0.015625.
+    ATOL = 2e-2 if TEST_DEVICE == "musa" else 1e-3
+    RTOL = 5e-2 if TEST_DEVICE == "musa" else 1e-2
     NGROUPS = 8
     INPUT_DTYPE = torch.bfloat16
     MATRIX_A_DTYPE = torch.float32
