@@ -689,6 +689,34 @@ class CakeSSDCombined:
         out: Optional[torch.Tensor] = None,
         return_final_states: bool = True,
     ):
+        if x.device.type == "musa":
+            if any(
+                value is not None
+                for value in (chunk_indices, chunk_offsets, seq_chunk_cumsum,
+                              checkpoint_token_indices, checkpoint_state_slots,
+                              checkpoint_states)
+            ):
+                raise NotImplementedError(
+                    "MUSA Cake compatibility path currently supports fixed-length SSD only"
+                )
+            from .ssd_combined import ssd_combined_fwd
+
+            return ssd_combined_fwd(
+                x,
+                dt,
+                A,
+                B,
+                C,
+                D=D,
+                z=z,
+                dt_bias=dt_bias,
+                dt_softplus=dt_softplus,
+                dt_limit=dt_limit,
+                initial_states=initial_states,
+                out=out,
+                return_final_states=return_final_states,
+            )
+
         batch, seqlen, nheads, headdim = x.shape
         if seqlen % _CHUNK_SIZE:
             raise ValueError("seqlen must be divisible by chunk_size=128")
