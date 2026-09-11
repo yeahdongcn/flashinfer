@@ -497,7 +497,14 @@ class CakeSSDCombined:
         has_z: bool,
         seq_idx_dtype: torch.dtype,
     ) -> None:
-        if chunk_size != _CHUNK_SIZE or headdim != _HEADDIM or dstate != _DSTATE:
+        musa_runtime = (
+            hasattr(torch.version, "musa")
+            and torch.version.musa is not None
+            and torch.musa.is_available()
+        )
+        if not musa_runtime and (
+            chunk_size != _CHUNK_SIZE or headdim != _HEADDIM or dstate != _DSTATE
+        ):
             raise ValueError(
                 "Cake SSDCombined requires chunk_size=128, headdim=64, and dstate=128"
             )
@@ -511,7 +518,8 @@ class CakeSSDCombined:
             raise ValueError("Cake SSDCombined state dtype must be bfloat16 or float16")
         if seq_idx_dtype not in (torch.int32, torch.int64):
             raise ValueError("Cake SSDCombined seq_idx dtype must be int32 or int64")
-        _target_arch()
+        if not musa_runtime:
+            _target_arch()
         self.nheads = nheads
         self.ngroups = ngroups
         self.state_dtype = state_dtype
