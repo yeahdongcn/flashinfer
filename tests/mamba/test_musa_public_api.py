@@ -78,6 +78,24 @@ def test_selective_state_update_philox_reproducibility():
     torch.testing.assert_close(state_a, state_b, rtol=0, atol=0)
 
 
+def test_selective_state_update_philox_slot_offset_changes_rounding():
+    x, dt, A, B, C, D_skip = _ssu_inputs()
+    seed = torch.tensor([987], device=DEVICE, dtype=torch.int64)
+    state_a = torch.zeros(8, H, D, N, device=DEVICE, dtype=torch.float16)
+    state_b = torch.zeros_like(state_a)
+    selective_state_update(
+        state_a, x, dt, A, B, C, D=D_skip,
+        state_batch_indices=torch.tensor([1], device=DEVICE, dtype=torch.int32),
+        rand_seed=seed, philox_rounds=5,
+    )
+    selective_state_update(
+        state_b, x, dt, A, B, C, D=D_skip,
+        state_batch_indices=torch.tensor([2], device=DEVICE, dtype=torch.int32),
+        rand_seed=seed, philox_rounds=5,
+    )
+    assert not torch.equal(state_a[1], state_b[2])
+
+
 def test_cake_selective_state_update_public_api_on_musa():
     x, dt, A, B, C, D_skip = _ssu_inputs()
     state = torch.zeros(8, H, D, N, device=DEVICE, dtype=torch.float16)
