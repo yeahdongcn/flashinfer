@@ -266,12 +266,8 @@ def selective_state_update_musa_reference(
                 read_slot,
                 running_override=running if token > 0 else None,
             )
-            if is_mtp and dst_state_batch_indices is not None:
+            if dst_state_batch_indices is not None or (not is_mtp and not is_varlen):
                 write_slot = _index_for(dst_state_batch_indices, b, token, read_slot)
-                write_state(write_slot, running)
-                read_slot = write_slot
-            elif not is_mtp and not is_varlen:
-                write_slot = _index_for(dst_state_batch_indices, b, 0, read_slot)
                 write_state(write_slot, running)
                 read_slot = write_slot
             if intermediate_states_buffer is not None:
@@ -296,6 +292,7 @@ def selective_state_update_musa_reference(
             not disable_state_update
             and not is_mtp
             and is_varlen
+            and dst_state_batch_indices is None
             or (
                 not disable_state_update
                 and is_mtp
