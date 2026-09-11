@@ -690,6 +690,19 @@ class SSDCombined:
         if x.device.type == "musa":
             from .musa_reference import ssd_combined_fwd_musa_reference
 
+            if checkpoint_token_indices is not None or checkpoint_state_slots is not None:
+                raise NotImplementedError(
+                    "MUSA SSD checkpoint token/state-slot outputs are not implemented"
+                )
+            if chunk_indices is not None or chunk_offsets is not None:
+                if seq_idx is None:
+                    raise ValueError("chunk metadata requires seq_idx on MUSA SSD")
+                if chunk_offsets is not None and (
+                    chunk_offsets.ndim != 1
+                    or int(chunk_offsets[-1].item()) > x.shape[1]
+                ):
+                    raise ValueError("chunk_offsets must be bounded by padded sequence length")
+
             native_out = out
             token_out = None
             if out is not None and out.shape != x.shape:
@@ -1043,6 +1056,17 @@ def ssd_combined_fwd(
     # MUSA path is a reference recurrence with the same public API; it is the
     # correctness anchor for the native S5000 SSD implementation.
     if x.device.type == "musa":
+        if checkpoint_token_indices is not None or checkpoint_state_slots is not None:
+            raise NotImplementedError(
+                "MUSA SSD checkpoint token/state-slot outputs are not implemented"
+            )
+        if chunk_indices is not None or chunk_offsets is not None:
+            if seq_idx is None:
+                raise ValueError("chunk metadata requires seq_idx on MUSA SSD")
+            if chunk_offsets is not None and (
+                chunk_offsets.ndim != 1 or int(chunk_offsets[-1].item()) > x.shape[1]
+            ):
+                raise ValueError("chunk_offsets must be bounded by padded sequence length")
         from .musa_reference import ssd_combined_fwd_musa_reference
 
         result = ssd_combined_fwd_musa_reference(
