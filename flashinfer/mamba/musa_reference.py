@@ -98,7 +98,17 @@ def selective_state_update_musa_reference(
         raise ValueError(f"state must be [slots, heads, dim, dstate], got {state.shape}")
     slots, nheads, dim, dstate = state.shape
 
-    def cast_state(value: torch.Tensor, target_dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+    def _counter_uniform(value: torch.Tensor, offset: int = 0) -> torch.Tensor:
+        """Deterministic device counter RNG used until native MUSA Philox lands."""
+        counter = torch.arange(value.numel(), device=value.device, dtype=torch.float32).reshape(value.shape)
+        seed = rand_seed.to(torch.float32).reshape(-1)[0]
+        return torch.frac(torch.sin(seed + counter + float(offset)) * 43758.5453).abs()
+
+    def cast_state(
+        value: torch.Tensor,
+        target_dtype: Optional[torch.dtype] = None,
+        rng_offset: int = 0,
+    ) -> torch.Tensor:
         target_dtype = state.dtype if target_dtype is None else target_dtype
         if rand_seed is None or target_dtype not in (torch.float16, torch.bfloat16):
             return value.to(target_dtype)
@@ -111,24 +121,14 @@ def selective_state_update_musa_reference(
         step = torch.pow(2.0, exponent - mantissa_bits)
         lower = torch.floor(value / step) * step
         probability = ((value - lower) / step).clamp(0, 1)
-        try:
-            generator = torch.Generator(device=value.device)
-            generator.manual_seed(int(rand_seed.reshape(-1)[0].item()) + philox_rounds)
-            random = torch.rand(value.shape, device=value.device, generator=generator)
-        except (RuntimeError, TypeError):
-            random = torch.rand(value.shape, device=value.device)
+        random = _counter_uniform(value, rng_offset + philox_rounds)
         rounded = torch.where(random < probability, lower + step, lower)
         return rounded.to(target_dtype)
 
-    def round_integer(value: torch.Tensor) -> torch.Tensor:
+    def round_integer(value: torch.Tensor, rng_offset: int = 0) -> torch.Tensor:
         if rand_seed is None:
             return value.round()
-        try:
-            generator = torch.Generator(device=value.device)
-            generator.manual_seed(int(rand_seed.reshape(-1)[0].item()) + philox_rounds)
-            random = torch.rand(value.shape, device=value.device, generator=generator)
-        except (RuntimeError, TypeError):
-            random = torch.rand(value.shape, device=value.device)
+        random = _counter_uniform(value, rng_offset + philox_rounds)
         lower = torch.floor(value)
         return lower + (random < (value - lower)).to(value.dtype)
 
@@ -150,10 +150,13 @@ def selective_state_update_musa_reference(
         if state.dtype == torch.int16:
             amax = value.abs().amax(dim=-1)
             scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)
-            state[state_slot].copy_(round_integer(value / scale[..., None]).clamp(-32768, 32767).to(torch.int16))
+            state[state_slot].copy_(
+                round_integer(value / scale[..., None], state_slot * value.numel())
+                .clamp(-32768, 32767).to(torch.int16)
+            )
             state_scale[state_slot].copy_(scale.to(state_scale.dtype))
         else:
-            state[state_slot].copy_(cast_state(value))
+            state[state_slot].copy_(cast_state(value, rng_offset=state_slot * value.numel()))
 
     is_varlen = cu_seqlens is not None and x.dim() == 3 and dt.dim() == 3
     is_mtp = x.dim() == 4
@@ -284,12 +287,19 @@ def selective_state_update_musa_reference(
                     amax = running.abs().amax(dim=-1)
                     scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)
                     intermediate_states_buffer[cache_slot, token].copy_(
-                        round_integer(running / scale[..., None]).clamp(-32768, 32767).to(torch.int16)
+                        round_integer(
+                            running / scale[..., None],
+                            (cache_slot * cache_steps + token) * running.numel(),
+                        ).clamp(-32768, 32767).to(torch.int16)
                     )
                     intermediate_state_scales[cache_slot, token].copy_(scale.to(intermediate_state_scales.dtype))
                 else:
                     intermediate_states_buffer[cache_slot, token].copy_(
-                        cast_state(running, intermediate_states_buffer.dtype)
+                        cast_state(
+                            running,
+                            intermediate_states_buffer.dtype,
+                            (cache_slot * cache_steps + token) * running.numel(),
+                        )
                     )
         if not disable_state_update and not is_mtp and is_varlen and not is_spec_decoding:
             final_slot = _index_for(dst_state_batch_indices, b, 0, read_slot)
