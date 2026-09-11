@@ -14,6 +14,78 @@ from typing import Optional
 import torch
 
 
+def _philox_uniform(
+    value: torch.Tensor, rand_seed: torch.Tensor, offset: int = 0
+) -> torch.Tensor:
+    """Generate the Philox-4x32-10 stream used by MUSA reference casts.
+
+    The implementation is intentionally expressed with tensor operations so
+    it follows the selected device.  ``offset`` is measured in 32-bit output
+    words, matching the layout-derived offsets used by the state writers.
+    """
+    mask = 0xFFFFFFFF
+    flat = torch.arange(value.numel(), device=value.device, dtype=torch.int64) + offset
+    c0 = flat & mask
+    c1 = (flat >> 32) & mask
+    c2 = torch.zeros_like(c0)
+    c3 = torch.zeros_like(c0)
+    seed = rand_seed.reshape(-1)[0].to(torch.int64)
+    k0 = seed & mask
+    k1 = (seed >> 32) & mask
+    m0, m1 = 0xD2511F53, 0xCD9E8D57
+    w0, w1 = 0x9E3779B9, 0xBB67AE85
+    for _ in range(10):
+        p0 = c0 * m0
+        p1 = c2 * m1
+        hi0, lo0 = (p0 >> 32) & mask, p0 & mask
+        hi1, lo1 = (p1 >> 32) & mask, p1 & mask
+        c0, c1, c2, c3 = (
+            (hi1 ^ c1 ^ k0) & mask,
+            lo1 & mask,
+            (hi0 ^ c3 ^ k1) & mask,
+            lo0 & mask,
+        )
+        k0 = (k0 + w0) & mask
+        k1 = (k1 + w1) & mask
+    return ((c0.to(torch.float32) + 0.5) / 4294967296.0).reshape(value.shape)
+
+
+def _stochastic_cast(
+    value: torch.Tensor,
+    target_dtype: torch.dtype,
+    rand_seed: Optional[torch.Tensor],
+    philox_rounds: int,
+    rng_offset: int,
+) -> torch.Tensor:
+    if (
+        rand_seed is None
+        or philox_rounds <= 0
+        or target_dtype not in (torch.float16, torch.bfloat16)
+    ):
+        return value.to(target_dtype)
+    mantissa_bits = 10 if target_dtype == torch.float16 else 7
+    magnitude = value.abs().clamp_min(torch.finfo(torch.float32).tiny)
+    exponent = torch.floor(torch.log2(magnitude))
+    step = torch.pow(2.0, exponent - mantissa_bits)
+    lower = torch.floor(value / step) * step
+    probability = ((value - lower) / step).clamp(0, 1)
+    random = _philox_uniform(value, rand_seed, rng_offset + philox_rounds)
+    return torch.where(random < probability, lower + step, lower).to(target_dtype)
+
+
+def _stochastic_round_integer(
+    value: torch.Tensor,
+    rand_seed: Optional[torch.Tensor],
+    philox_rounds: int,
+    rng_offset: int,
+) -> torch.Tensor:
+    if rand_seed is None or philox_rounds <= 0:
+        return value.round()
+    lower = torch.floor(value)
+    random = _philox_uniform(value, rand_seed, rng_offset + philox_rounds)
+    return lower + (random < (value - lower)).to(value.dtype)
+
+
 def _softplus(x: torch.Tensor) -> torch.Tensor:
     # Match the selective-scan kernels' numerically stable branch at large x.
     return torch.where(x <= 20, torch.nn.functional.softplus(x), x)
@@ -132,7 +204,11 @@ def selective_state_update_musa_reference(
         rng_offset: int = 0,
     ) -> torch.Tensor:
         target_dtype = state.dtype if target_dtype is None else target_dtype
-        if rand_seed is None or target_dtype not in (torch.float16, torch.bfloat16):
+        if (
+            rand_seed is None
+            or philox_rounds <= 0
+            or target_dtype not in (torch.float16, torch.bfloat16)
+        ):
             return value.to(target_dtype)
         # Reference stochastic cast.  Native kernels will use the exact
         # device Philox sequence; this preserves the public seed/rounds
@@ -148,7 +224,7 @@ def selective_state_update_musa_reference(
         return rounded.to(target_dtype)
 
     def round_integer(value: torch.Tensor, rng_offset: int = 0) -> torch.Tensor:
-        if rand_seed is None:
+        if rand_seed is None or philox_rounds <= 0:
             return value.round()
         random = _counter_uniform(value, rng_offset + philox_rounds)
         lower = torch.floor(value)
@@ -651,13 +727,20 @@ def replayssm_materialize_musa_reference(
     if len(dependency_inputs) % 4 != 0 or not dependency_outputs:
         raise ValueError("MUSA ReplaySSM dependency lists have invalid layout")
     layers = len(dependency_inputs) // 4
-    if len(dependency_outputs) != layers:
-        raise ValueError("one state output is required per ReplaySSM layer")
+    if len(dependency_outputs) not in (layers, 2 * layers):
+        raise ValueError(
+            "ReplaySSM requires one state output per layer; quantized state "
+            "also requires one scale output per layer"
+        )
     if src_slots.shape[0] != layers or dst_slots.shape != src_slots.shape:
         raise ValueError("slot tables must have shape [layers, batch]")
     batch = src_slots.shape[1]
-    active = active_request_indices.to(torch.int64).flatten().tolist()
-    active = [i for i in active if i >= 0]
+    active_values = active_request_indices.to(torch.int64).flatten().tolist()
+    active = []
+    for index in active_values:
+        if index < 0:
+            break
+        active.append(index)
     if active and max(active) >= batch:
         raise ValueError("active request index is outside the slot table")
     for layer in range(layers):
@@ -666,6 +749,9 @@ def replayssm_materialize_musa_reference(
         dt_cache = dependency_inputs[2 * layers + layer]
         a = dependency_inputs[3 * layers + layer].to(torch.float32)
         state = dependency_outputs[layer]
+        state_scale = (
+            dependency_outputs[layers + layer] if len(dependency_outputs) == 2 * layers else None
+        )
         if x_cache.dim() < 4 or b_cache.dim() < 4 or dt_cache.dim() < 3:
             raise ValueError("ReplaySSM cache tensors have invalid rank")
         heads = state.shape[1]
@@ -682,13 +768,22 @@ def replayssm_materialize_musa_reference(
             prefix = int(replay_prefix_len[request].item())
             if not (0 <= start < ring_buffer_len and 0 <= prefix <= max_window):
                 raise ValueError("ReplaySSM ring metadata is outside its declared bounds")
+            if prefix == 0:
+                state[dst].copy_(state[src])
+                if state_scale is not None:
+                    state_scale[dst].copy_(state_scale[src])
+                continue
             running = state[src].to(torch.float32).clone()
-            if state.dtype == torch.int8:
-                scale_table = dependency_outputs[layer]
-                del scale_table
-                raise NotImplementedError(
-                    "MUSA ReplaySSM int8 state requires explicit scale tensors"
-                )
+            if state.dtype in (torch.int8, torch.int16, torch.float8_e4m3fn):
+                if state_scale is None:
+                    raise ValueError(
+                        "quantized MUSA ReplaySSM state requires scale backing tensors "
+                        "in dependency_outputs"
+                    )
+                scale = state_scale[src].to(torch.float32)
+                if scale.shape[-1] == 1:
+                    scale = scale.squeeze(-1)
+                running = running * scale[..., None]
             for offset in range(prefix):
                 ring = (start + offset) % ring_buffer_len
                 for head in range(heads):
@@ -699,7 +794,39 @@ def replayssm_materialize_musa_reference(
                     b_t = b_cache[src, group, ring].to(torch.float32)
                     running[head] = running[head] * decay
                     running[head] += (delta * x_t)[:, None] * b_t[None, :]
-            state[dst].copy_(running.to(state_dtype))
+            if state.dtype in (torch.int8, torch.int16, torch.float8_e4m3fn):
+                if state_scale is None:
+                    raise ValueError("quantized MUSA ReplaySSM state requires scales")
+                qmax = 127 if state.dtype == torch.int8 else 32767
+                if state.dtype == torch.float8_e4m3fn:
+                    qmax = 448
+                amax = running.abs().amax(dim=-1)
+                scale = torch.where(amax == 0, torch.ones_like(amax), amax / qmax)
+                quantized = running / scale[..., None]
+                if state.dtype == torch.float8_e4m3fn:
+                    state[dst].copy_(quantized.to(state.dtype))
+                else:
+                    quantized = _stochastic_round_integer(
+                        quantized,
+                        rand_seed,
+                        philox_rounds,
+                        layer * state.numel() + dst * running.numel(),
+                    )
+                    state[dst].copy_(quantized.clamp(-qmax - 1, qmax).to(state.dtype))
+                if state_scale[dst].shape[-1] == 1:
+                    state_scale[dst].copy_(scale.to(state_scale.dtype).unsqueeze(-1))
+                else:
+                    state_scale[dst].copy_(scale.to(state_scale.dtype))
+            else:
+                state[dst].copy_(
+                    _stochastic_cast(
+                        running,
+                        state_dtype,
+                        rand_seed,
+                        philox_rounds,
+                        layer * state.numel() + dst * running.numel(),
+                    )
+                )
 
 
 def checkpointing_ssu_musa_reference(
@@ -727,12 +854,21 @@ def checkpointing_ssu_musa_reference(
     philox_rounds: int,
 ) -> torch.Tensor:
     """Reference checkpointing SSU for MUSA ring-cache bring-up."""
-    if x.dim() != 4 or dt.dim() != 3:
-        raise ValueError("checkpointing SSU expects x [batch,T,H,D] and dt [batch,T,H]")
+    if x.dim() != 4 or dt.dim() not in (3, 4):
+        raise ValueError(
+            "checkpointing SSU expects x [batch,T,H,D] and dt [batch,T,H] "
+            "or tied-dim dt [batch,T,H,D]"
+        )
     batch, predicted, heads, dim = x.shape
     slots, state_heads, state_dim, dstate = state.shape
     if state_heads != heads or state_dim != dim:
         raise ValueError("checkpointing state and x head dimensions differ")
+    if dt.shape[:3] != (batch, predicted, heads) or (
+        dt.dim() == 4 and dt.shape[3] not in (1, dim)
+    ):
+        raise ValueError("checkpointing dt shape is incompatible with x")
+    if state.dtype in (torch.int8, torch.int16, torch.float8_e4m3fn) and state_scale is None:
+        raise ValueError("quantized checkpointing state requires state_scale")
     if x_cache.shape[1:] != (heads, x_cache.shape[2], dim):
         raise ValueError("x_cache must be [slots, heads, ring, dim]")
     groups = B.shape[2] if B.dim() == 4 else B.shape[1]
@@ -740,6 +876,10 @@ def checkpointing_ssu_musa_reference(
         raise ValueError("heads must be divisible by groups")
     ratio = heads // groups
     ring_len = x_cache.shape[2]
+    if ring_start.numel() != batch or prev_num_accepted_tokens.numel() != batch:
+        raise ValueError("checkpointing ring metadata must have one entry per request")
+    if state_batch_indices is not None and state_batch_indices.numel() != batch:
+        raise ValueError("state_batch_indices must have one entry per request")
     out.zero_()
     A_f = A.to(torch.float32)
     bias = None if dt_bias is None else dt_bias.to(torch.float32)
@@ -748,14 +888,18 @@ def checkpointing_ssu_musa_reference(
         if slot == pad_slot_id:
             running = torch.zeros(heads, dim, dstate, dtype=torch.float32, device=x.device)
         else:
+            if slot < 0 or slot >= slots:
+                raise IndexError(f"state slot {slot} is outside [0, {slots})")
             running = state[slot].to(torch.float32).clone()
-            if state.dtype in (torch.int8, torch.int16) and state_scale is not None:
+            if state.dtype in (torch.int8, torch.int16, torch.float8_e4m3fn) and state_scale is not None:
                 scale = state_scale[slot].to(torch.float32)
                 if scale.shape[-1] == 1:
                     scale = scale.squeeze(-1)
                 running = running * scale[..., None]
         start = int(ring_start[request].item())
         accepted = int(prev_num_accepted_tokens[request].item())
+        if start < 0 or start >= ring_len or accepted < 0 or accepted > ring_len:
+            raise ValueError("checkpointing ring metadata is outside cache bounds")
         for offset in range(accepted + predicted):
             ring = (start + offset) % ring_len
             if offset < accepted:
@@ -774,16 +918,29 @@ def checkpointing_ssu_musa_reference(
                 b_t = B[request, token].to(torch.float32)
                 if slot != pad_slot_id:
                     x_cache[slot, :, ring].copy_(x[request, token])
-                    dt_cache[slot, :, ring].copy_(dt[request, token])
                     b_cache[slot, :, ring].copy_(B[request, token])
             if bias is not None:
                 dt_t = dt_t + bias
             if dt_softplus:
                 dt_t = _softplus(dt_t)
+            if offset >= accepted and slot != pad_slot_id:
+                # Replay consumes the processed delta, after bias and
+                # softplus, exactly as the recurrence did.
+                if dt_t.dim() in (0, 1):
+                    dt_cache[slot, :, ring].copy_(dt_t)
+                elif dt_t.shape[-1] == 1:
+                    dt_cache[slot, :, ring].copy_(dt_t.squeeze(-1))
+                else:
+                    raise ValueError(
+                        "dt_cache is [slot,head,ring] and cannot store tied-dim dt"
+                    )
             for head in range(heads):
                 group = head // ratio
-                running[head] = running[head] * torch.exp(A_f[head] * dt_t[head])
-                running[head] += (dt_t[head] * x_t[head])[:, None] * b_t[group][None, :]
+                dt_head = dt_t[head]
+                if dt_head.dim() == 0 or dt_head.numel() == 1:
+                    dt_head = dt_head.expand(dim)
+                running[head] = running[head] * torch.exp(A_f[head] * dt_head[..., None])
+                running[head] += (dt_head * x_t[head])[:, None] * b_t[group][None, :]
             if offset >= accepted:
                 token = offset - accepted
                 for head in range(heads):
@@ -796,17 +953,39 @@ def checkpointing_ssu_musa_reference(
                         y = y * z_t * torch.sigmoid(z_t)
                     out[request, token, head].copy_(y.to(out.dtype))
         if slot != pad_slot_id:
-            if state.dtype in (torch.int8, torch.int16):
-                if state_scale is None:
-                    raise ValueError("quantized checkpoint state requires state_scale")
-                qmax = 127 if state.dtype == torch.int8 else 32767
+            if state.dtype in (torch.int8, torch.int16, torch.float8_e4m3fn):
+                qmax = (
+                    127
+                    if state.dtype == torch.int8
+                    else 32767
+                    if state.dtype == torch.int16
+                    else 448
+                )
                 amax = running.abs().amax(dim=-1)
                 scale = torch.where(amax == 0, torch.ones_like(amax), amax / qmax)
-                state[slot].copy_((running / scale[..., None]).round().clamp(-qmax - 1, qmax).to(state.dtype))
+                quantized = running / scale[..., None]
+                if state.dtype == torch.float8_e4m3fn:
+                    state[slot].copy_(quantized.to(state.dtype))
+                else:
+                    quantized = _stochastic_round_integer(
+                        quantized,
+                        rand_seed,
+                        philox_rounds,
+                        slot * running.numel(),
+                    )
+                    state[slot].copy_(quantized.clamp(-qmax - 1, qmax).to(state.dtype))
                 if state_scale[slot].shape[-1] == 1:
                     state_scale[slot].copy_(scale.to(state_scale.dtype).unsqueeze(-1))
                 else:
                     state_scale[slot].copy_(scale.to(state_scale.dtype))
             else:
-                state[slot].copy_(running.to(state.dtype))
+                state[slot].copy_(
+                    _stochastic_cast(
+                        running,
+                        state.dtype,
+                        rand_seed,
+                        philox_rounds,
+                        slot * running.numel(),
+                    )
+                )
     return out
