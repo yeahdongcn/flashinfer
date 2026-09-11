@@ -698,11 +698,13 @@ class CakeSSDCombined:
         return_final_states: bool = True,
     ):
         if x.device.type == "musa":
+            if x.dim() != 4:
+                raise NotImplementedError(
+                    "MUSA Cake compatibility path requires padded [B,S,H,D] input"
+                )
             if any(
                 value is not None
-                for value in (chunk_indices, chunk_offsets, seq_chunk_cumsum,
-                              checkpoint_token_indices, checkpoint_state_slots,
-                              checkpoint_states)
+                for value in (checkpoint_token_indices, checkpoint_state_slots, checkpoint_states)
             ):
                 raise NotImplementedError(
                     "MUSA Cake compatibility path currently supports fixed-length SSD only"
@@ -721,6 +723,7 @@ class CakeSSDCombined:
                 dt_softplus=dt_softplus,
                 dt_limit=dt_limit,
                 initial_states=initial_states,
+                seq_idx=seq_idx,
                 out=out,
                 return_final_states=return_final_states,
             )
