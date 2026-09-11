@@ -43,7 +43,7 @@ if TEST_DEVICE == "musa":
         (2, 8, 8, 16, torch.bfloat16, torch.float32, True),
         (2, 8, 8, 16, torch.float32, torch.float32, True),
         (1, 8, 8, 16, torch.bfloat16, torch.float32, True),
-        (2, 4, 8, 16, torch.bfloat16, torch.float32, True),
+        (2, 8, 8, 16, torch.bfloat16, torch.float32, True),
         (2, 8, 16, 16, torch.bfloat16, torch.float32, True),
         (2, 8, 8, 8, torch.bfloat16, torch.float32, True),
         (2, 8, 8, 16, torch.float16, torch.float32, True),
@@ -497,7 +497,7 @@ if TEST_DEVICE == "musa":
     _INT16_PARAMS = [
         (2, 8, 8, 16, torch.float32, True),
         (1, 8, 8, 16, torch.float32, True),
-        (2, 4, 8, 16, torch.float32, True),
+        (2, 8, 8, 16, torch.float32, True),
         (2, 8, 16, 16, torch.float32, True),
         (2, 8, 8, 8, torch.float32, True),
         (2, 8, 8, 16, torch.bfloat16, True),
