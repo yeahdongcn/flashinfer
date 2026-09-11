@@ -25,7 +25,7 @@ def _inputs(*, batch: int = 2, steps: int | None = None):
     A = -torch.rand(heads, dim, dstate, dtype=torch.float32, device=TEST_DEVICE) - 1
     B = torch.randn(*b_shape, dtype=torch.bfloat16, device=TEST_DEVICE)
     C = torch.randn(*b_shape, dtype=torch.bfloat16, device=TEST_DEVICE)
-    D = torch.randn(heads, dim, dtype=torch.bfloat16, device=TEST_DEVICE)
+    D = torch.randn(heads, dim, dtype=torch.float32, device=TEST_DEVICE)
     bias = torch.randn(heads, dim, dtype=torch.float32, device=TEST_DEVICE)
     return state, x, dt, A, B, C, D, bias
 

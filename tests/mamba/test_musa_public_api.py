@@ -26,7 +26,7 @@ def _ssu_inputs(batch=1, steps=None):
     A = -torch.rand(H, D, N, device=DEVICE, dtype=torch.float32) - 1
     B = torch.randn(*b_shape, device=DEVICE, dtype=torch.bfloat16)
     C = torch.randn_like(B)
-    D_skip = torch.randn(H, D, device=DEVICE, dtype=torch.bfloat16)
+    D_skip = torch.randn(H, D, device=DEVICE, dtype=torch.float32)
     return x, dt, A, B, C, D_skip
 
 
