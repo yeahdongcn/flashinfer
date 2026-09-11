@@ -36,7 +36,7 @@ def _index_for(
         return default
     if indices.dim() == 1:
         return int(indices[batch].item())
-    return int(indices[batch, token].item())
+    return int(indices[batch, min(token, indices.shape[1] - 1)].item())
 
 
 def selective_state_update_musa_reference(
