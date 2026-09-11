@@ -43,7 +43,10 @@ def ssu_one_token(
             amax = running.abs().amax(dim=-1)
             scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)
             state_ref[slot].copy_((running / scale[..., None]).round().clamp(-32768, 32767).to(torch.int16))
-            scale_ref[slot].copy_(scale.to(scale_ref.dtype))
+            if scale_ref[slot].shape[-1] == 1:
+                scale_ref[slot].copy_(scale.to(scale_ref.dtype).unsqueeze(-1))
+            else:
+                scale_ref[slot].copy_(scale.to(scale_ref.dtype))
         else:
             state_ref[slot].copy_(running.to(state_ref.dtype))
     return output, state_ref, scale_ref
