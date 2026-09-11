@@ -497,6 +497,7 @@ class CakeSSDCombined:
         has_z: bool,
         seq_idx_dtype: torch.dtype,
     ) -> None:
+        self._chunk_size = chunk_size
         musa_runtime = (
             hasattr(torch.version, "musa")
             and torch.version.musa is not None
