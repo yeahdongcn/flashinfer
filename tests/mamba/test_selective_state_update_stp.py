@@ -41,6 +41,7 @@ _BASE_PARAMS = [
 ]
 if TEST_DEVICE == "musa":
     _BASE_PARAMS = [
+        (1, 64, 64, 128, torch.bfloat16, torch.float32, True),
         (2, 8, 8, 16, torch.bfloat16, torch.float32, True),
         (2, 8, 8, 16, torch.float32, torch.float32, True),
         (1, 8, 8, 16, torch.bfloat16, torch.float32, True),
