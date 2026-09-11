@@ -87,7 +87,7 @@ class TestSelectiveStateUpdateDstIndices:
     DIM = 8 if TEST_DEVICE == "musa" else 64
     DSTATE = 16 if TEST_DEVICE == "musa" else 128
     NGROUPS = 2 if TEST_DEVICE == "musa" else 8
-    STATE_CACHE_SIZE = 64 if TEST_DEVICE == "musa" else 256
+    STATE_CACHE_SIZE = 256 if TEST_DEVICE == "musa" else 256
 
     @pytest.mark.parametrize("algorithm", ["simple"])
     @pytest.mark.parametrize("batch", [1, 4, 32, 64])
@@ -173,7 +173,7 @@ class TestSelectiveStateUpdateDstIndices2D:
     DIM = 8 if TEST_DEVICE == "musa" else 64
     DSTATE = 16 if TEST_DEVICE == "musa" else 128
     NGROUPS = 2 if TEST_DEVICE == "musa" else 8
-    STATE_CACHE_SIZE = 64 if TEST_DEVICE == "musa" else 256
+    STATE_CACHE_SIZE = 256 if TEST_DEVICE == "musa" else 256
 
     @pytest.mark.parametrize("algorithm", ["simple"])
     @pytest.mark.parametrize("batch", [1, 16, 64])
@@ -254,7 +254,7 @@ class TestSelectiveStateUpdateVarlen:
     DIM = 8 if TEST_DEVICE == "musa" else 64
     DSTATE = 16 if TEST_DEVICE == "musa" else 128
     NGROUPS = 2 if TEST_DEVICE == "musa" else 8
-    STATE_CACHE_SIZE = 128 if TEST_DEVICE == "musa" else 512
+    STATE_CACHE_SIZE = 512 if TEST_DEVICE == "musa" else 512
 
     @pytest.mark.parametrize("algorithm", ["simple"])
     @pytest.mark.parametrize(
@@ -454,7 +454,7 @@ class TestSelectiveStateUpdateNumAcceptedTokens:
     DIM = 8 if TEST_DEVICE == "musa" else 64
     DSTATE = 16 if TEST_DEVICE == "musa" else 128
     NGROUPS = 2 if TEST_DEVICE == "musa" else 8
-    STATE_CACHE_SIZE = 128 if TEST_DEVICE == "musa" else 512
+    STATE_CACHE_SIZE = 512 if TEST_DEVICE == "musa" else 512
 
     @pytest.mark.parametrize("algorithm", ["simple"])
     @pytest.mark.parametrize("n_seqs", [4, 8, 16])
