@@ -191,8 +191,13 @@ def selective_state_update_musa_reference(
             f"dt_bias must broadcast to [{nheads}, {dim}], got {dt_bias.shape}"
         )
 
-    def update_one(batch_idx: int, token_idx: int, state_slot: int) -> torch.Tensor:
-        running = read_state(state_slot)
+    def update_one(
+        batch_idx: int,
+        token_idx: int,
+        state_slot: int,
+        running_override: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        running = read_state(state_slot) if running_override is None else running_override
 
         for h in range(nheads):
             g = h // group_ratio
@@ -249,12 +254,18 @@ def selective_state_update_musa_reference(
         running = None
         for token in range(end - start):
             token_idx = start + token if is_varlen else token
-            running = update_one(b, token_idx, read_slot if token == 0 else read_slot)
+            running = update_one(
+                b,
+                token_idx,
+                read_slot,
+                running_override=running if token > 0 else None,
+            )
             if is_mtp and dst_state_batch_indices is not None:
                 write_slot = _index_for(dst_state_batch_indices, b, token, read_slot)
-            else:
+                write_state(write_slot, running)
+                read_slot = write_slot
+            elif not is_mtp and not is_varlen:
                 write_slot = _index_for(dst_state_batch_indices, b, 0, read_slot)
-            if not disable_state_update and write_slot != pad_slot_id:
                 write_state(write_slot, running)
                 read_slot = write_slot
             if intermediate_states_buffer is not None:
@@ -275,6 +286,18 @@ def selective_state_update_musa_reference(
                     intermediate_states_buffer[cache_slot, token].copy_(
                         cast_state(running, intermediate_states_buffer.dtype)
                     )
+        if (
+            not disable_state_update
+            and not is_mtp
+            and is_varlen
+            or (
+                not disable_state_update
+                and is_mtp
+                and dst_state_batch_indices is None
+                and intermediate_states_buffer is None
+            )
+        ):
+            write_state(read_slot, running)
     return out
 
 
