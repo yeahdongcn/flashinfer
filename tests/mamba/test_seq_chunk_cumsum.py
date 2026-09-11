@@ -96,7 +96,9 @@ class TestSeqChunkCumsum:
 
     def _call_kernel(self, seq_idx, chunk_indices, chunk_offsets, chunk_size, num_seqs):
         if TEST_DEVICE == "musa":
-            return seq_chunk_cumsum_reference(
+            from flashinfer.mamba.musa_seq_chunk import seq_chunk_cumsum
+
+            return seq_chunk_cumsum(
                 seq_idx, chunk_indices, chunk_offsets, chunk_size, num_seqs
             )
         from flashinfer.mamba.ssd_combined import _get_seq_chunk_cumsum_module
@@ -187,7 +189,6 @@ class TestSeqChunkCumsum:
         )
         torch.testing.assert_close(out, ref)
 
-    @pytest.mark.skipif(TEST_DEVICE == "musa", reason="CUDA seq_chunk_cumsum extension")
     def test_multi_block_with_tile_state(self):
         """2048 sequences (> 1024) with pre-allocated tile_state buffer."""
         from flashinfer.mamba.ssd_combined import _get_seq_chunk_cumsum_module
@@ -200,12 +201,23 @@ class TestSeqChunkCumsum:
             seq_idx, chunk_indices, chunk_offsets, self.CHUNK_SIZE, num_seqs
         )
 
+        if TEST_DEVICE == "musa":
+            from flashinfer.mamba.musa_seq_chunk import seq_chunk_cumsum
+
+            output = torch.zeros(num_seqs + 1, dtype=torch.int32, device=TEST_DEVICE)
+            tile_state = torch.empty(1024 * 1024, dtype=torch.uint8, device=TEST_DEVICE)
+            seq_chunk_cumsum(
+                seq_idx, chunk_indices, chunk_offsets, self.CHUNK_SIZE, num_seqs,
+                out=output, tile_state=tile_state,
+            )
+            torch.testing.assert_close(output, ref)
+            return
         module = _get_seq_chunk_cumsum_module()
         num_logical_chunks = len(chunk_indices)
-        output = torch.zeros(num_seqs + 1, dtype=torch.int32, device="cuda")
+        output = torch.zeros(num_seqs + 1, dtype=torch.int32, device=TEST_DEVICE)
 
         # Allocate a tile_state buffer large enough (1 MB is way more than needed)
-        tile_state = torch.empty(1024 * 1024, dtype=torch.uint8, device="cuda")
+        tile_state = torch.empty(1024 * 1024, dtype=torch.uint8, device=TEST_DEVICE)
 
         module.seq_chunk_cumsum(
             seq_idx,
@@ -219,7 +231,6 @@ class TestSeqChunkCumsum:
         )
         torch.testing.assert_close(output, ref)
 
-    @pytest.mark.skipif(TEST_DEVICE == "musa", reason="CUDA seq_chunk_cumsum extension")
     def test_multi_block_without_tile_state(self):
         """2048 sequences (> 1024) with tile_state=None (fallback allocation)."""
         num_seqs = 2048

@@ -486,6 +486,13 @@ class SSDCombined:
         """
         if seq_chunk_cumsum is None:
             seq_chunk_cumsum = self._get_or_alloc_seq_cumsum(num_seqs, seq_idx.device)
+        if seq_idx.device.type == "musa":
+            from .musa_seq_chunk import seq_chunk_cumsum as musa_seq_chunk_cumsum
+
+            return musa_seq_chunk_cumsum(
+                seq_idx, chunk_indices, chunk_offsets, chunk_size, num_seqs,
+                out=seq_chunk_cumsum, tile_state=tile_state,
+            )
         if tile_state is None:
             module = _get_seq_chunk_cumsum_module()
             tile_state_bytes = module.seq_chunk_cumsum_tile_state_size(num_seqs)
@@ -513,6 +520,8 @@ class SSDCombined:
     @staticmethod
     def tile_state_size(num_seqs: int) -> int:
         """Return the tile_state buffer size in bytes for the given num_seqs."""
+        if getattr(torch.version, "musa", None) is not None:
+            return 0
         return _get_seq_chunk_cumsum_module().seq_chunk_cumsum_tile_state_size(num_seqs)
 
     # -- main entry point ------------------------------------------------------
