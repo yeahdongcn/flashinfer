@@ -41,14 +41,6 @@ def test_selective_state_update_stochastic_rounding(algorithm):
     slot = torch.tensor([3], device=DEVICE, dtype=torch.int32)
     seed = torch.tensor([123], device=DEVICE, dtype=torch.int64)
 
-    if algorithm in ("vertical", "horizontal"):
-        with pytest.raises(NotImplementedError):
-            selective_state_update(
-                state, x, dt, A, B, C, D=D_skip,
-                state_batch_indices=slot, rand_seed=seed,
-                philox_rounds=5, algorithm=algorithm,
-            )
-        return
     y = selective_state_update(
         state,
         x,
