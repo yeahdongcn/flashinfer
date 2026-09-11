@@ -313,6 +313,8 @@ def ssd_combined_fwd_musa_reference(
         raise ValueError(f"A must have shape [{nheads}]")
     if z is not None and z.shape != x.shape:
         raise ValueError("z must have the same shape as x")
+    if D is not None and D.dtype != x.dtype:
+        raise ValueError("D must have the same dtype as x")
 
     state_dtype = initial_states.dtype if initial_states is not None else torch.bfloat16
     if state_dtype not in (torch.float16, torch.bfloat16, torch.float32):
