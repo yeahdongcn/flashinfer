@@ -690,7 +690,14 @@ class SSDCombined:
         if x.device.type == "musa":
             from .musa_reference import ssd_combined_fwd_musa_reference
 
-            return ssd_combined_fwd_musa_reference(
+            native_out = out
+            token_out = None
+            if out is not None and out.shape != x.shape:
+                token_out = torch.empty_like(x)
+            else:
+                token_out = out
+
+            result = ssd_combined_fwd_musa_reference(
                 x,
                 dt,
                 A,
@@ -703,9 +710,19 @@ class SSDCombined:
                 dt_limit=dt_limit,
                 initial_states=initial_states,
                 seq_idx=seq_idx,
-                out=out,
+                out=token_out,
                 return_final_states=return_final_states,
             )
+            if native_out is not None and native_out.shape != x.shape:
+                token_out = result[0]
+                native_out.copy_(
+                    token_out.view(
+                        x.shape[0], x.shape[1] // self.chunk_size,
+                        x.shape[2], x.shape[3],
+                    ).permute(0, 2, 3, 1, 2)
+                )
+                result = (native_out, result[1])
+            return result
 
         if self._backend == "cake":
             return self._cake_runner.run(
