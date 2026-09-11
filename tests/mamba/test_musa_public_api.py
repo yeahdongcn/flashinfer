@@ -240,3 +240,22 @@ def test_ssd_checkpoint_token_and_slot_on_musa():
     assert final.shape == (batch, H, D, N)
     assert torch.isfinite(checkpoint).all()
     assert torch.any(checkpoint != 0)
+
+
+def test_ssd_update_seq_chunk_cumsum_on_musa():
+    x = torch.randn(1, 4, H, D, device=DEVICE, dtype=torch.bfloat16)
+    dt = torch.randn(1, 4, H, device=DEVICE, dtype=torch.float32)
+    A = -torch.rand(H, device=DEVICE, dtype=torch.float32) - 1
+    B = torch.randn(1, 4, G, N, device=DEVICE, dtype=torch.bfloat16)
+    C = torch.randn_like(B)
+    seq_idx = torch.tensor([[0, 0, 1, 1]], device=DEVICE, dtype=torch.int32)
+    chunk_indices = torch.tensor([0, 1], device=DEVICE, dtype=torch.int32)
+    chunk_offsets = torch.tensor([0, 2], device=DEVICE, dtype=torch.int32)
+    cumsum = torch.empty(3, device=DEVICE, dtype=torch.int32)
+    out, _ = ssd_combined_fwd(
+        x, dt, A, B, C, seq_idx=seq_idx,
+        chunk_indices=chunk_indices, chunk_offsets=chunk_offsets,
+        seq_chunk_cumsum=cumsum, update_seq_chunk_cumsum=True,
+    )
+    assert out.shape == x.shape
+    assert torch.equal(cumsum.cpu(), torch.tensor([0, 1, 2], dtype=torch.int32))
