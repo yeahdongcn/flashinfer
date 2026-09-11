@@ -162,7 +162,7 @@ def selective_state_update_musa_reference(
                 dt_t = dt_t + bias_h[h]
             if dt_softplus:
                 dt_t = _softplus(dt_t)
-            d_a = torch.exp(A_h[h] * dt_t)
+            d_a = torch.exp(A_h[h] * dt_t[:, None])
             running[h] = running[h] * d_a + (dt_t * b_t)[None, :] * x_t[:, None]
             y_t = torch.sum(c_t[None, :] * running[h], dim=-1)
             if D_h is not None:
