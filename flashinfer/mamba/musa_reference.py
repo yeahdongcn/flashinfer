@@ -599,6 +599,9 @@ def ssd_combined_fwd_varlen_musa_reference(
     initial_states: Optional[torch.Tensor] = None,
     return_intermediate_states: bool = False,
     state_dtype: Optional[torch.dtype] = None,
+    checkpoint_token_indices: Optional[torch.Tensor] = None,
+    checkpoint_state_slots: Optional[torch.Tensor] = None,
+    checkpoint_states: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Packed/varlen SSD API matching vLLM's Mamba2 prefill contract."""
     if x.dim() != 3 or dt.dim() != 2 or B.dim() != 3 or C.dim() != 3:
@@ -631,6 +634,22 @@ def ssd_combined_fwd_varlen_musa_reference(
     else:
         state_dtype = state_dtype or C.dtype
         initial = None
+    checkpoint_args = (checkpoint_token_indices, checkpoint_state_slots, checkpoint_states)
+    if any(value is not None for value in checkpoint_args) and not all(
+        value is not None for value in checkpoint_args
+    ):
+        raise ValueError("varlen SSD checkpoint arguments must be provided together")
+    if checkpoint_states is not None:
+        if checkpoint_token_indices.shape != (last_chunk_indices.numel(),):
+            raise ValueError("checkpoint token metadata must have one entry per sequence")
+        if checkpoint_state_slots.shape != checkpoint_token_indices.shape:
+            raise ValueError("checkpoint state slots must match token metadata")
+        if checkpoint_states.ndim != 4 or checkpoint_states.shape[1:] != (
+            nheads,
+            headdim,
+            dstate,
+        ):
+            raise ValueError("checkpoint_states has incompatible varlen state shape")
 
     if D is not None:
         D_f = D.to(torch.float32)
@@ -648,6 +667,7 @@ def ssd_combined_fwd_varlen_musa_reference(
     )
     state_by_sequence: dict[int, torch.Tensor] = {}
     seen_sequences: set[int] = set()
+    sequence_token_counts: dict[int, int] = {}
 
     for chunk in range(nchunks):
         sequence = int(seq_idx[chunk].item())
@@ -691,6 +711,14 @@ def ssd_combined_fwd_varlen_musa_reference(
                     z_t = z[token, head].to(torch.float32)
                     y = y * z_t * torch.sigmoid(z_t)
                 out[token, head].copy_(y.to(out.dtype))
+            sequence_token_counts[sequence] = sequence_token_counts.get(sequence, 0) + 1
+            if checkpoint_states is not None and sequence < checkpoint_token_indices.numel():
+                if sequence_token_counts[sequence] == int(checkpoint_token_indices[sequence].item()):
+                    checkpoint_slot = int(checkpoint_state_slots[sequence].item())
+                    if checkpoint_slot >= 0:
+                        if checkpoint_slot >= checkpoint_states.shape[0]:
+                            raise IndexError("varlen checkpoint state slot is out of bounds")
+                        checkpoint_states[checkpoint_slot].copy_(running.to(checkpoint_states.dtype))
         state_by_sequence[sequence] = running
         states[chunk].copy_(running.to(state_dtype))
 

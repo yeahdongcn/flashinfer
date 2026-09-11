@@ -751,15 +751,11 @@ class CakeSSDCombined:
                     initial_states=initial_states,
                     out=out,
                     return_intermediate_states=not return_final_states,
+                    checkpoint_token_indices=checkpoint_token_indices,
+                    checkpoint_state_slots=checkpoint_state_slots,
+                    checkpoint_states=checkpoint_states,
                 )
                 return out, final_states
-            if any(
-                value is not None
-                for value in (checkpoint_token_indices, checkpoint_state_slots, checkpoint_states)
-            ):
-                raise NotImplementedError(
-                    "MUSA Cake compatibility path currently supports fixed-length SSD only"
-                )
             from .ssd_combined import ssd_combined_fwd
 
             return ssd_combined_fwd(

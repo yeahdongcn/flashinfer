@@ -1187,6 +1187,9 @@ def ssd_combined_fwd_varlen(
     dt_limit: tuple[float, float] = (0.0, float("inf")),
     return_intermediate_states: bool = False,
     state_dtype: Optional[torch.dtype] = None,
+    checkpoint_token_indices: Optional[torch.Tensor] = None,
+    checkpoint_state_slots: Optional[torch.Tensor] = None,
+    checkpoint_states: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Packed SSD API matching vLLM's Mamba2 varlen prefill contract.
 
@@ -1220,6 +1223,9 @@ def ssd_combined_fwd_varlen(
         initial_states=initial_states,
         return_intermediate_states=return_intermediate_states,
         state_dtype=state_dtype,
+        checkpoint_token_indices=checkpoint_token_indices,
+        checkpoint_state_slots=checkpoint_state_slots,
+        checkpoint_states=checkpoint_states,
     )
 
 
