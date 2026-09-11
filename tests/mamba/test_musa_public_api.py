@@ -9,6 +9,7 @@ if os.environ.get("FLASHINFER_MAMBA_TEST_DEVICE") != "musa":
     pytest.skip("set FLASHINFER_MAMBA_TEST_DEVICE=musa", allow_module_level=True)
 
 from flashinfer.mamba import (  # noqa: E402
+    CakeSSDCombined,
     mamba_chunk_scan_combined_varlen,
     selective_state_update,
 )
@@ -115,3 +116,45 @@ def test_mamba_chunk_scan_combined_varlen_public_api():
 
     assert states.shape == (3, H, D, N)
     assert torch.isfinite(states).all()
+
+
+def test_cake_ssd_padded_varlen_metadata_on_musa():
+    batch, seqlen = 1, 4
+    x = torch.randn(batch, seqlen, H, D, device=DEVICE, dtype=torch.bfloat16)
+    dt = torch.randn(batch, seqlen, H, device=DEVICE, dtype=torch.float32)
+    A = -torch.rand(H, device=DEVICE, dtype=torch.float32) - 1
+    B = torch.randn(batch, seqlen, G, N, device=DEVICE, dtype=torch.bfloat16)
+    C = torch.randn_like(B)
+    initial = torch.randn(2, H, D, N, device=DEVICE, dtype=torch.float16)
+    seq_idx = torch.tensor([[0, 0, 1, 1]], device=DEVICE, dtype=torch.int32)
+    runner = CakeSSDCombined(
+        4,
+        H,
+        D,
+        N,
+        G,
+        io_dtype=torch.bfloat16,
+        state_dtype=torch.float16,
+        has_d=False,
+        d_has_hdim=False,
+        has_initial_states=True,
+        has_varlen=True,
+        has_z=False,
+        seq_idx_dtype=torch.int32,
+    )
+    out, final = runner.run(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        initial_states=initial,
+        seq_idx=seq_idx,
+        chunk_indices=torch.tensor([0], device=DEVICE, dtype=torch.int32),
+        chunk_offsets=torch.tensor([0], device=DEVICE, dtype=torch.int32),
+        return_final_states=True,
+    )
+    assert out.shape == x.shape
+    assert final.shape == initial.shape
+    assert torch.isfinite(out).all()
+    assert torch.isfinite(final).all()
