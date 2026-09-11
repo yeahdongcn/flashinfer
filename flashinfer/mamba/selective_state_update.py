@@ -311,7 +311,7 @@ def selective_state_update(
     # is deliberately a correctness scaffold; the native MUSA kernel will keep
     # this exact call boundary when it lands.
     if state.device.type == "musa":
-        if algorithm not in ("auto", "simple", "vertical", "horizontal"):
+        if algorithm not in ("auto", "simple", "vertical", "horizontal", "async_horizontal"):
             raise ValueError(f"unknown MUSA SSU algorithm={algorithm!r}")
         # The correctness provider has one recurrence implementation.  The
         # algorithm value remains accepted so callers can use the upstream
