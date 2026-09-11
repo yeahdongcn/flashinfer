@@ -21,6 +21,7 @@ from .checkpointing_ssu import (
     checkpointing_ssu,
 )
 from .replayssm_materialize import replayssm_materialize
+from .cake_ssd_combined import CakeSSDCombined
 
 __all__ = [
     "cake_selective_state_update",
@@ -28,6 +29,7 @@ __all__ = [
     "checkpointing_ssu",
     "allocate_checkpointing_ssu_scratch",
     "replayssm_materialize",
+    "CakeSSDCombined",
 ]
 
 try:
