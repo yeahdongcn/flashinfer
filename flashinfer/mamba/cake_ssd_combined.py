@@ -704,6 +704,9 @@ class CakeSSDCombined:
                     raise ValueError("MUSA Cake packed path requires x[T,H,D] and seq_idx[T]")
                 from .ssd_combined import ssd_combined_fwd_varlen
 
+                if out is None:
+                    out = torch.empty_like(x)
+
                 seq_tokens = seq_idx.reshape(-1).to(torch.int64)
                 if seq_tokens.numel() != x.shape[0]:
                     raise ValueError("packed seq_idx must contain one id per token")
