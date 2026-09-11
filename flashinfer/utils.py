@@ -26,12 +26,15 @@ import torch
 import torch.version
 try:
     import pynvml
+    _USING_PYMTML = False
 except ImportError:  # NVIDIA-only optional dependency; MUSA does not ship NVML.
     try:
         # pymtml intentionally exposes the pynvml-compatible API for MUSA.
         import pymtml as pynvml  # type: ignore[no-redef]
+        _USING_PYMTML = True
     except ImportError:
         pynvml = None  # type: ignore[assignment]
+        _USING_PYMTML = False
 from torch.torch_version import TorchVersion
 from torch.torch_version import __version__ as torch_version
 import inspect
@@ -367,7 +370,13 @@ def get_gpu_memory_bandwidth(device: torch.device) -> float:
 
         return bandwidth
     finally:
-        pynvml.nvmlShutdown()
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            # pymtml currently reports InvalidArgument when its singleton is
+            # already torn down; a successful bandwidth query is still valid.
+            if not _USING_PYMTML:
+                raise
 
 
 @functools.cache
