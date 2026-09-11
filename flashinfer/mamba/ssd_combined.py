@@ -1083,9 +1083,9 @@ def ssd_combined_fwd_varlen(
     D: Optional[torch.Tensor] = None,
     z: Optional[torch.Tensor] = None,
     dt_bias: Optional[torch.Tensor] = None,
+    initial_states: Optional[torch.Tensor] = None,
     dt_softplus: bool = False,
     dt_limit: tuple[float, float] = (0.0, float("inf")),
-    initial_states: Optional[torch.Tensor] = None,
     return_intermediate_states: bool = False,
     state_dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
