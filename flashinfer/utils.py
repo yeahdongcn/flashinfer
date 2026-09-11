@@ -24,7 +24,10 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Un
 
 import torch
 import torch.version
-import pynvml
+try:
+    import pynvml
+except ImportError:  # NVIDIA-only optional dependency; MUSA does not ship NVML.
+    pynvml = None  # type: ignore[assignment]
 from torch.torch_version import TorchVersion
 from torch.torch_version import __version__ as torch_version
 import inspect
@@ -339,6 +342,12 @@ def get_gpu_memory_bandwidth(device: torch.device) -> float:
 
     # Get device index
     device_index = device.index if device.index is not None else 0
+
+    if pynvml is None:
+        raise RuntimeError(
+            "pynvml is required for NVIDIA memory-bandwidth queries; "
+            "the MUSA backend does not provide NVML"
+        )
 
     # Use pynvml to get bandwidth
     pynvml.nvmlInit()
