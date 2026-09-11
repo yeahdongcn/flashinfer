@@ -87,6 +87,12 @@ def selective_state_update_musa_reference(
         and intermediate_state_scales.shape[-1] == 1
     ):
         intermediate_state_scales = intermediate_state_scales.squeeze(-1)
+    if (
+        state_batch_indices is not None
+        and intermediate_state_indices is not None
+        and state_batch_indices.dtype != intermediate_state_indices.dtype
+    ):
+        raise ValueError("state and intermediate index tensors must have the same dtype")
 
     if state.dim() != 4:
         raise ValueError(f"state must be [slots, heads, dim, dstate], got {state.shape}")
