@@ -665,10 +665,6 @@ def _get_algorithms_no_horizontal():
     return algos
 
 
-@pytest.mark.skipif(
-    TEST_DEVICE == "musa",
-    reason="MUSA Triton reference register allocation is covered by the public MUSA test",
-)
 class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
     """Test fp16 state with stochastic rounding vs Triton reference."""
 

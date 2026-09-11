@@ -14,7 +14,7 @@ from flashinfer.utils import is_cvt_rs_supported, is_sm100a_supported
 from .utils import TEST_DEVICE, create_test_inputs, clone_preserving_strides
 
 _requires_sm100 = pytest.mark.skipif(
-    not is_sm100a_supported(torch.device(TEST_DEVICE)),
+    TEST_DEVICE != "musa" and not is_sm100a_supported(torch.device(TEST_DEVICE)),
     reason="Vertical/horizontal MTP kernel requires SM100+ (Blackwell)",
 )
 
