@@ -70,6 +70,47 @@ def test_musa_reference_single_token_updates_selected_slot():
     assert torch.equal(state[untouched], original[untouched])
 
 
+def test_musa_reference_int16_state_and_stochastic_rounding():
+    _, x, dt, A, B, C, D, bias = _inputs(batch=1)
+    state = torch.zeros(8, 2, 3, 4, dtype=torch.int16, device=TEST_DEVICE)
+    scales = torch.ones(8, 2, 3, dtype=torch.float32, device=TEST_DEVICE)
+    out = torch.empty_like(x)
+    selected = torch.tensor([3], dtype=torch.int32, device=TEST_DEVICE)
+    seed = torch.tensor([123], dtype=torch.int64, device=TEST_DEVICE)
+
+    result = selective_state_update_musa_reference(
+        state,
+        x,
+        dt,
+        A,
+        B,
+        C,
+        D,
+        None,
+        bias,
+        True,
+        selected,
+        None,
+        -1,
+        out,
+        False,
+        intermediate_states_buffer=None,
+        intermediate_state_indices=None,
+        state_scale=scales,
+        intermediate_state_scales=None,
+        rand_seed=seed,
+        philox_rounds=5,
+        cache_steps=0,
+        cu_seqlens=None,
+        num_accepted_tokens=None,
+    )
+
+    assert result.shape == x.shape
+    assert torch.isfinite(result).all()
+    assert torch.isfinite(scales[selected]).all()
+    assert torch.any(state[selected] != 0)
+
+
 def test_musa_reference_mtp_writes_destination_slots_and_intermediates():
     state, x, dt, A, B, C, D, bias = _inputs(batch=1, steps=3)
     out = torch.empty_like(x)

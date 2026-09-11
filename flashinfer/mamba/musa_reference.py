@@ -71,24 +71,25 @@ def selective_state_update_musa_reference(
     state/index/replay contract.  Native MUSA kernels will replace this slow
     reference implementation behind the same boundary.
     """
-    if state.dtype not in (torch.float16, torch.bfloat16, torch.float32):
-        raise NotImplementedError("MUSA SSU bring-up supports fp16/bf16/fp32 state only")
-    if state_scale is not None or intermediate_state_scales is not None:
-        raise NotImplementedError("MUSA SSU bring-up does not support scaled state yet")
-    if state_scale is not None or intermediate_state_scales is not None:
-        raise NotImplementedError("scaled state is not part of the initial MUSA API port")
+    if state.dtype not in (torch.int16, torch.float16, torch.bfloat16, torch.float32):
+        raise NotImplementedError("MUSA SSU supports int16/fp16/bf16/fp32 state")
+    if state.dtype == torch.int16 and state_scale is None:
+        raise ValueError("int16 state requires state_scale")
+    if state.dtype != torch.int16 and state_scale is not None:
+        raise ValueError("state_scale is only valid for int16 state")
 
     if state.dim() != 4:
         raise ValueError(f"state must be [slots, heads, dim, dstate], got {state.shape}")
     slots, nheads, dim, dstate = state.shape
 
-    def cast_state(value: torch.Tensor) -> torch.Tensor:
-        if rand_seed is None or value.dtype not in (torch.float16, torch.bfloat16):
-            return value.to(state.dtype)
+    def cast_state(value: torch.Tensor, target_dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+        target_dtype = state.dtype if target_dtype is None else target_dtype
+        if rand_seed is None or target_dtype not in (torch.float16, torch.bfloat16):
+            return value.to(target_dtype)
         # Reference stochastic cast.  Native kernels will use the exact
         # device Philox sequence; this preserves the public seed/rounds
         # contract while keeping the bring-up path device-independent.
-        mantissa_bits = 10 if state.dtype == torch.float16 else 7
+        mantissa_bits = 10 if target_dtype == torch.float16 else 7
         magnitude = value.abs().clamp_min(torch.finfo(torch.float32).tiny)
         exponent = torch.floor(torch.log2(magnitude))
         step = torch.pow(2.0, exponent - mantissa_bits)
@@ -101,21 +102,41 @@ def selective_state_update_musa_reference(
         except (RuntimeError, TypeError):
             random = torch.rand(value.shape, device=value.device)
         rounded = torch.where(random < probability, lower + step, lower)
-        return rounded.to(state.dtype)
+        return rounded.to(target_dtype)
+
+    def round_integer(value: torch.Tensor) -> torch.Tensor:
+        if rand_seed is None:
+            return value.round()
+        try:
+            generator = torch.Generator(device=value.device)
+            generator.manual_seed(int(rand_seed.reshape(-1)[0].item()) + philox_rounds)
+            random = torch.rand(value.shape, device=value.device, generator=generator)
+        except (RuntimeError, TypeError):
+            random = torch.rand(value.shape, device=value.device)
+        lower = torch.floor(value)
+        return lower + (random < (value - lower)).to(value.dtype)
 
     def read_state(state_slot: int) -> torch.Tensor:
         if state_slot == pad_slot_id:
             return torch.zeros((nheads, dim, dstate), dtype=torch.float32, device=state.device)
         if state_slot < 0 or state_slot >= slots:
             raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
-        return state[state_slot].to(torch.float32).clone()
+        value = state[state_slot].to(torch.float32).clone()
+        if state.dtype == torch.int16:
+            value = value * state_scale[state_slot].to(torch.float32)[..., None]
+        return value
 
     def write_state(state_slot: int, value: torch.Tensor) -> None:
         if disable_state_update or state_slot == pad_slot_id:
             return
         if state_slot < 0 or state_slot >= slots:
             raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
-        state[state_slot].copy_(cast_state(value))
+        if state.dtype == torch.int16:
+            scale = value.abs().amax(dim=-1).clamp_min(torch.finfo(torch.float32).tiny) / 32767
+            state[state_slot].copy_(round_integer(value / scale[..., None]).clamp(-32768, 32767).to(torch.int16))
+            state_scale[state_slot].copy_(scale.to(state_scale.dtype))
+        else:
+            state[state_slot].copy_(cast_state(value))
 
     is_varlen = cu_seqlens is not None and x.dim() == 3 and dt.dim() == 3
     is_mtp = x.dim() == 4
@@ -232,7 +253,18 @@ def selective_state_update_musa_reference(
                     if intermediate_state_indices is not None
                     else b
                 )
-                intermediate_states_buffer[cache_slot, token].copy_(cast_state(running))
+                if intermediate_states_buffer.dtype == torch.int16:
+                    if intermediate_state_scales is None:
+                        raise ValueError("int16 intermediate state requires scales")
+                    scale = running.abs().amax(dim=-1).clamp_min(torch.finfo(torch.float32).tiny) / 32767
+                    intermediate_states_buffer[cache_slot, token].copy_(
+                        round_integer(running / scale[..., None]).clamp(-32768, 32767).to(torch.int16)
+                    )
+                    intermediate_state_scales[cache_slot, token].copy_(scale.to(intermediate_state_scales.dtype))
+                else:
+                    intermediate_states_buffer[cache_slot, token].copy_(
+                        cast_state(running, intermediate_states_buffer.dtype)
+                    )
     return out
 
 
