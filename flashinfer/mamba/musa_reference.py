@@ -252,7 +252,7 @@ def selective_state_update_musa_reference(
 
     for b, (start, end) in enumerate(steps):
         accepted = (
-            int(num_accepted_tokens[b].item())
+            max(int(num_accepted_tokens[b].item()) - 1, 0)
             if num_accepted_tokens is not None
             else 0
         )
