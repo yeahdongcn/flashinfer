@@ -488,6 +488,8 @@ def ssd_combined_fwd_musa_reference(
             raise ValueError("checkpoint metadata must have one entry per batch sequence")
         if checkpoint_states.ndim != 4 or checkpoint_states.shape[1:] != (nheads, headdim, dstate):
             raise ValueError("checkpoint_states has incompatible state shape")
+        if torch.any(checkpoint_state_slots >= checkpoint_states.shape[0]):
+            raise ValueError("checkpoint_state_slots contains an out-of-bounds slot")
 
     bias = None if dt_bias is None else dt_bias.reshape(1, 1, nheads).to(torch.float32)
     d_head = None
@@ -650,6 +652,8 @@ def ssd_combined_fwd_varlen_musa_reference(
             dstate,
         ):
             raise ValueError("checkpoint_states has incompatible varlen state shape")
+        if torch.any(checkpoint_state_slots >= checkpoint_states.shape[0]):
+            raise ValueError("checkpoint_state_slots contains an out-of-bounds slot")
 
     if D is not None:
         D_f = D.to(torch.float32)
