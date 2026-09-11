@@ -38,6 +38,18 @@ _BASE_PARAMS = [
     (  64,    64,     64,  128,     torch.bfloat16,     torch.bfloat16,    True ),  # weight_dtype=bf16
     (  64,    64,     64,  128,     torch.bfloat16,     torch.float32,     False),  # use_out_tensor=False
 ]
+if TEST_DEVICE == "musa":
+    _BASE_PARAMS = [
+        (2, 8, 8, 16, torch.bfloat16, torch.float32, True),
+        (2, 8, 8, 16, torch.float32, torch.float32, True),
+        (1, 8, 8, 16, torch.bfloat16, torch.float32, True),
+        (2, 4, 8, 16, torch.bfloat16, torch.float32, True),
+        (2, 8, 16, 16, torch.bfloat16, torch.float32, True),
+        (2, 8, 8, 8, torch.bfloat16, torch.float32, True),
+        (2, 8, 8, 16, torch.float16, torch.float32, True),
+        (2, 8, 8, 16, torch.bfloat16, torch.bfloat16, True),
+        (2, 8, 8, 16, torch.bfloat16, torch.float32, False),
+    ]
 # fmt: on
 
 
@@ -481,6 +493,15 @@ _INT16_PARAMS = [
     (  64,    64,     64,  256,    torch.float32,     True ),  # dstate=256
     (  64,    64,     64,  128,    torch.bfloat16,    True ),  # weight_dtype=bf16
 ]
+if TEST_DEVICE == "musa":
+    _INT16_PARAMS = [
+        (2, 8, 8, 16, torch.float32, True),
+        (1, 8, 8, 16, torch.float32, True),
+        (2, 4, 8, 16, torch.float32, True),
+        (2, 8, 16, 16, torch.float32, True),
+        (2, 8, 8, 8, torch.float32, True),
+        (2, 8, 8, 16, torch.bfloat16, True),
+    ]
 # fmt: on
 
 
@@ -745,6 +766,11 @@ class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
         (  64,    64,     64,  128,     torch.float16,  torch.float32,  True ),  # base
         (  64,    64,     64,   64,     torch.float16,  torch.float32,  True ),  # dstate=64
     )
+    if TEST_DEVICE == "musa":
+        _SR_PARAMS = (
+            (2, 8, 8, 16, torch.float16, torch.float32, True),
+            (2, 8, 8, 8, torch.float16, torch.float32, True),
+        )
     # fmt: on
 
     @pytest.mark.parametrize("algorithm", _get_algorithms_no_horizontal())
@@ -836,6 +862,11 @@ class TestSelectiveStateUpdateVariousNgroups(TestSelectiveStateUpdate):
         (  64,    64,     64,  128,    torch.bfloat16,     torch.float32,  True,           32),  # ratio=2
         (  64,    64,     64,  128,    torch.bfloat16,     torch.float32,  True,           64),  # ratio=1
     )
+    if TEST_DEVICE == "musa":
+        _NGROUPS_PARAMS = tuple(
+            (2, 8, 8, 16, torch.bfloat16, torch.float32, True, ngroups)
+            for ngroups in (1, 2, 4, 8)
+        )
     # fmt: on
 
     @pytest.mark.parametrize("algorithm", _get_algorithms())
