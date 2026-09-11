@@ -588,7 +588,7 @@ def selective_state_update_triton(
         else (0, 0)
     )
 
-    with torch.cuda.device(x.device.index):
+    with (torch.musa if x.device.type == "musa" else torch.cuda).device(x.device.index):
         _selective_scan_update_kernel[grid](
             state,
             state_scale,
