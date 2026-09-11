@@ -748,9 +748,10 @@ def replayssm_materialize_musa_reference(
     """Reference ReplaySSM materialization for MUSA.
 
     Pointer tables are opaque on Python, so the public MUSA path requires the
-    same dependency tensors that the CUDA graph path keeps alive.  Inputs are
-    ordered as ``[x_cache, B_cache, dt_cache, A]`` and outputs are state tensors
-    ordered by layer, matching the existing test helper.
+    same dependency tensors that the CUDA graph path keeps alive. Inputs are
+    ordered as ``[x_cache, B_cache, dt_cache, A]``. Outputs contain one state
+    tensor per layer; quantized state additionally appends one scale tensor per
+    layer, matching the MUSA dependency-anchor convention.
     """
     if len(dependency_inputs) % 4 != 0 or not dependency_outputs:
         raise ValueError("MUSA ReplaySSM dependency lists have invalid layout")
