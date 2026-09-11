@@ -99,10 +99,32 @@ def selective_state_update_musa_reference(
     slots, nheads, dim, dstate = state.shape
 
     def _counter_uniform(value: torch.Tensor, offset: int = 0) -> torch.Tensor:
-        """Deterministic device counter RNG used until native MUSA Philox lands."""
-        counter = torch.arange(value.numel(), device=value.device, dtype=torch.float32).reshape(value.shape)
-        seed = rand_seed.to(torch.float32).reshape(-1)[0]
-        return torch.frac(torch.sin(seed + counter + float(offset)) * 43758.5453).abs()
+        """Philox-4x32-10 counter stream with a layout-derived offset."""
+        mask = 0xFFFFFFFF
+        flat = torch.arange(value.numel(), device=value.device, dtype=torch.int64) + offset
+        c0 = flat & mask
+        c1 = (flat >> 32) & mask
+        c2 = torch.zeros_like(c0)
+        c3 = torch.zeros_like(c0)
+        seed = rand_seed.reshape(-1)[0].to(torch.int64)
+        k0 = seed & mask
+        k1 = (seed >> 32) & mask
+        m0, m1 = 0xD2511F53, 0xCD9E8D57
+        w0, w1 = 0x9E3779B9, 0xBB67AE85
+        for _ in range(10):
+            p0 = c0 * m0
+            p1 = c2 * m1
+            hi0, lo0 = (p0 >> 32) & mask, p0 & mask
+            hi1, lo1 = (p1 >> 32) & mask, p1 & mask
+            n0 = hi1 ^ c1 ^ k0
+            n1 = lo1
+            n2 = hi0 ^ c3 ^ k1
+            n3 = lo0
+            c0, c1, c2, c3 = n0 & mask, n1 & mask, n2 & mask, n3 & mask
+            k0 = (k0 + w0) & mask
+            k1 = (k1 + w1) & mask
+        uniform = (c0.to(torch.float32) + 0.5) / 4294967296.0
+        return uniform.reshape(value.shape)
 
     def cast_state(
         value: torch.Tensor,
