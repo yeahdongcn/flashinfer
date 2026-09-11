@@ -68,6 +68,7 @@ def test_replayssm_materialize_musa_dependency_path():
         torch.tensor([[1]], device=d, dtype=torch.int32),
         torch.zeros(1, device=d, dtype=torch.int32),
         torch.tensor([1], device=d, dtype=torch.int32),
+        torch.tensor([0], device=d, dtype=torch.int32),
         dependency_inputs=[x_cache, b_cache, dt_cache, a],
         dependency_outputs=[state],
         heads_per_group=2,
