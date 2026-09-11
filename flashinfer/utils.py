@@ -27,7 +27,11 @@ import torch.version
 try:
     import pynvml
 except ImportError:  # NVIDIA-only optional dependency; MUSA does not ship NVML.
-    pynvml = None  # type: ignore[assignment]
+    try:
+        # pymtml intentionally exposes the pynvml-compatible API for MUSA.
+        import pymtml as pynvml  # type: ignore[no-redef]
+    except ImportError:
+        pynvml = None  # type: ignore[assignment]
 from torch.torch_version import TorchVersion
 from torch.torch_version import __version__ as torch_version
 import inspect
@@ -337,8 +341,8 @@ def get_gpu_memory_bandwidth(device: torch.device) -> float:
         device = torch.device(device)
 
     # Check if it's a CUDA device
-    if device.type != "cuda":
-        raise ValueError(f"Device must be a CUDA device, got {device}")
+    if device.type not in ("cuda", "musa"):
+        raise ValueError(f"Device must be a CUDA or MUSA device, got {device}")
 
     # Get device index
     device_index = device.index if device.index is not None else 0
