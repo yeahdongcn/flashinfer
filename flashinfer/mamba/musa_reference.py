@@ -553,7 +553,7 @@ def ssd_combined_fwd_varlen_musa_reference(
         state_dtype = state_dtype or initial_states.dtype
         initial = initial_states.to(torch.float32)
     else:
-        state_dtype = state_dtype or torch.float32
+        state_dtype = state_dtype or C.dtype
         initial = None
 
     if D is not None:
