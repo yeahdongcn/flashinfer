@@ -305,14 +305,22 @@ class SSDCombined:
     ):
         from ..utils import get_compute_capability
 
-        major, minor = get_compute_capability(torch.device("cuda"))
+        musa_runtime = (
+            hasattr(torch.version, "musa")
+            and torch.version.musa is not None
+            and torch.musa.is_available()
+        )
+        if musa_runtime:
+            major, minor = 3, 1
+        else:
+            major, minor = get_compute_capability(torch.device("cuda"))
         # The SSD CuTe-DSL kernel uses tcgen05 MMA (MmaF16BF16Op), which is only
         # available on datacenter Blackwell (SM100/SM103/SM110). Consumer/workstation
         # Blackwell (SM120/SM121) lacks tcgen05, so reject it here with a clear message
         # instead of a cryptic cute-dsl "expects ... sm_100a ... got sm_120a" OpError.
         # SM107 (Rubin) shares major=10 but is not yet supported by this kernel, so
         # reject it explicitly rather than letting it slip through the major check.
-        if major not in (10, 11) or (major, minor) == (10, 7):
+        if not musa_runtime and (major not in (10, 11) or (major, minor) == (10, 7)):
             raise ValueError(
                 f"SSDCombined requires datacenter Blackwell (SM100/SM103/SM110) "
                 f"for tcgen05 MMA. Got SM{major}{minor}."
@@ -664,6 +672,26 @@ class SSDCombined:
             raise ValueError(
                 "initial_states must be provided in varlen mode (when seq_idx, "
                 "chunk_indices, and chunk_offsets are given) to determine num_seqs"
+            )
+
+        if x.device.type == "musa":
+            from .musa_reference import ssd_combined_fwd_musa_reference
+
+            return ssd_combined_fwd_musa_reference(
+                x,
+                dt,
+                A,
+                B,
+                C,
+                D=D,
+                z=z,
+                dt_bias=dt_bias,
+                dt_softplus=dt_softplus,
+                dt_limit=dt_limit,
+                initial_states=initial_states,
+                seq_idx=seq_idx,
+                out=out,
+                return_final_states=return_final_states,
             )
 
         if self._backend == "cake":
