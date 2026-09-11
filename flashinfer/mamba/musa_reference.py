@@ -700,6 +700,8 @@ def checkpointing_ssu_musa_reference(
             running = torch.zeros(heads, dim, dstate, dtype=torch.float32, device=x.device)
         else:
             running = state[slot].to(torch.float32).clone()
+            if state.dtype == torch.int8 and state_scale is not None:
+                running = running * state_scale[slot].to(torch.float32)[..., None]
         start = int(ring_start[request].item())
         accepted = int(prev_num_accepted_tokens[request].item())
         for offset in range(accepted + predicted):
@@ -736,5 +738,12 @@ def checkpointing_ssu_musa_reference(
                         y = y * z_t * torch.sigmoid(z_t)
                     out[request, token, head].copy_(y.to(out.dtype))
         if slot != pad_slot_id:
-            state[slot].copy_(running.to(state.dtype))
+            if state.dtype == torch.int8:
+                if state_scale is None:
+                    raise ValueError("int8 checkpoint state requires state_scale")
+                scale = running.abs().amax(dim=-1).clamp_min(torch.finfo(torch.float32).tiny) / 127
+                state[slot].copy_((running / scale[..., None]).round().clamp(-128, 127).to(torch.int8))
+                state_scale[slot].copy_(scale.to(state_scale.dtype))
+            else:
+                state[slot].copy_(running.to(state.dtype))
     return out
