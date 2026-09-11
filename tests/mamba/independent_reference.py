@@ -4,7 +4,7 @@ import torch
 
 
 def ssu_one_token(
-    state, x, dt, A, B, C, D, dt_bias, state_slots, *, state_scale=None, z=None
+    state, x, dt, A, B, C, D, dt_bias, state_slots, *, state_scale=None, z=None, dt_softplus=True
 ):
     state_ref = state.clone()
     scale_ref = state_scale.clone() if state_scale is not None else None
@@ -16,8 +16,13 @@ def ssu_one_token(
         slot = int(state_slots[batch].item())
         running = state_ref[slot].to(torch.float32).clone()
         if state_ref.dtype == torch.int16:
-            running = running * scale_ref[slot].to(torch.float32)[..., None]
-        delta = torch.nn.functional.softplus(dt[batch].to(torch.float32) + dt_bias)
+            scale = scale_ref[slot].to(torch.float32)
+            if scale.shape[-1] == 1:
+                scale = scale.squeeze(-1)
+            running = running * scale[..., None]
+        delta = dt[batch].to(torch.float32) + dt_bias
+        if dt_softplus:
+            delta = torch.nn.functional.softplus(delta)
         for head in range(heads):
             group = head // ratio
             running[head] *= torch.exp(
