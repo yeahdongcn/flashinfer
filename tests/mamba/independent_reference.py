@@ -4,7 +4,7 @@ import torch
 
 
 def ssu_one_token(
-    state, x, dt, A, B, C, D, dt_bias, state_slots, *, state_scale=None
+    state, x, dt, A, B, C, D, dt_bias, state_slots, *, state_scale=None, z=None
 ):
     state_ref = state.clone()
     scale_ref = state_scale.clone() if state_scale is not None else None
@@ -31,6 +31,9 @@ def ssu_one_token(
             )
             if D is not None:
                 output[batch, head] += D[head].to(torch.float32) * x[batch, head].to(torch.float32)
+            if z is not None:
+                z_t = z[batch, head].to(torch.float32)
+                output[batch, head] *= z_t * torch.sigmoid(z_t)
         if state_ref.dtype == torch.int16:
             amax = running.abs().amax(dim=-1)
             scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)

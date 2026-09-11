@@ -86,7 +86,7 @@ class TestSelectiveStateUpdate:
             y_ref, state_ref, scale_ref = ssu_one_token(
                 inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
                 inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
-                inputs["slot_idx"], state_scale=inputs.get("state_scale"),
+                inputs["slot_idx"], state_scale=inputs.get("state_scale"), z=inputs.get("z"),
             )
             return (y_ref, state_ref, scale_ref) if inputs.get("state_scale") is not None else (y_ref, state_ref)
         state_ref = inputs["state_cache"].clone()
@@ -396,7 +396,7 @@ class TestSelectiveStateUpdateNonContiguous(TestSelectiveStateUpdate):
             y_ref, state_ref, scale_ref = ssu_one_token(
                 inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
                 inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
-                inputs["slot_idx"], state_scale=inputs.get("state_scale"),
+                inputs["slot_idx"], state_scale=inputs.get("state_scale"), z=inputs.get("z"),
             )
             return (y_ref, state_ref, scale_ref) if inputs.get("state_scale") is not None else (y_ref, state_ref)
         state_ref = clone_preserving_strides(inputs["state_cache"])
@@ -548,7 +548,7 @@ class TestSelectiveStateUpdateInt16(TestSelectiveStateUpdate):
             y_ref, state_ref, scale_ref = ssu_one_token(
                 inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
                 inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
-                inputs["slot_idx"], state_scale=inputs["state_scale"],
+                inputs["slot_idx"], state_scale=inputs["state_scale"], z=inputs.get("z"),
             )
             return y_ref, state_ref, scale_ref
         state_ref = inputs["state_cache"].clone()
@@ -718,7 +718,7 @@ class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
             y_ref, state_ref, scale_ref = ssu_one_token(
                 inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
                 inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
-                inputs["slot_idx"], state_scale=inputs.get("state_scale"),
+                inputs["slot_idx"], state_scale=inputs.get("state_scale"), z=inputs.get("z"),
             )
             return y_ref, state_ref
         state_ref = inputs["state_cache"].clone()
