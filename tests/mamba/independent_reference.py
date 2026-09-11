@@ -20,7 +20,9 @@ def ssu_one_token(
         delta = torch.nn.functional.softplus(dt[batch].to(torch.float32) + dt_bias)
         for head in range(heads):
             group = head // ratio
-            running[head] *= torch.exp(A[head].to(torch.float32) * delta[batch * 0 + head])
+            running[head] *= torch.exp(
+                A[head].to(torch.float32) * delta[head, :, None]
+            )
             running[head] += (
                 delta[head] * x[batch, head].to(torch.float32)
             )[:, None] * B[batch, group].to(torch.float32)[None, :]
