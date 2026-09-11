@@ -1090,6 +1090,18 @@ def ssd_combined_fwd(
                 raise ValueError("chunk_offsets must be bounded by padded sequence length")
         from .musa_reference import ssd_combined_fwd_musa_reference
 
+        provider_out = out
+        native_out = None
+        if out is not None and tuple(out.shape) != tuple(x.shape):
+            expected_chunks = (x.shape[1] + 127) // 128
+            expected_native = (x.shape[0], x.shape[2], x.shape[3], expected_chunks, 128)
+            if tuple(out.shape) != expected_native or not out.is_contiguous():
+                raise ValueError(
+                    "MUSA SSD out must be token-major x.shape or contiguous "
+                    "native [batch, heads, headdim, nchunks, 128]"
+                )
+            native_out = out
+            provider_out = torch.empty_like(x)
         result = ssd_combined_fwd_musa_reference(
             x,
             dt,
@@ -1103,12 +1115,25 @@ def ssd_combined_fwd(
             dt_limit=dt_limit,
             initial_states=initial_states,
             seq_idx=seq_idx,
-            out=out,
+            out=provider_out,
             return_final_states=return_final_states,
             checkpoint_token_indices=checkpoint_token_indices,
             checkpoint_state_slots=checkpoint_state_slots,
             checkpoint_states=checkpoint_states,
         )
+        if native_out is not None:
+            token_output, final_states = result
+            native_view = native_out.reshape(
+                x.shape[0], x.shape[2], x.shape[3], expected_chunks, 128
+            )
+            native_view.zero_()
+            padded = torch.zeros(
+                x.shape[0], expected_chunks * 128, x.shape[2], x.shape[3],
+                device=x.device, dtype=token_output.dtype,
+            )
+            padded[:, : x.shape[1]].copy_(token_output)
+            native_view.copy_(padded.reshape(x.shape[0], expected_chunks, 128, x.shape[2], x.shape[3]).permute(0, 3, 4, 1, 2))
+            return token_output, final_states
         return result
 
     _, _, nheads, headdim = x.shape
