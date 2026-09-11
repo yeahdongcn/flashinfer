@@ -928,8 +928,10 @@ def checkpointing_ssu_musa_reference(
                 # softplus, exactly as the recurrence did.
                 if dt_t.dim() in (0, 1):
                     dt_cache[slot, :, ring].copy_(dt_t)
-                elif dt_t.shape[-1] == 1:
-                    dt_cache[slot, :, ring].copy_(dt_t.squeeze(-1))
+                elif dt_t.shape[-1] in (1, dim):
+                    # The public 4-D form is tied across the head dimension;
+                    # the replay ring stores one processed delta per head.
+                    dt_cache[slot, :, ring].copy_(dt_t[..., 0])
                 else:
                     raise ValueError(
                         "dt_cache is [slot,head,ring] and cannot store tied-dim dt"
