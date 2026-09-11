@@ -50,6 +50,8 @@ _CTA_PER_SM_CANDIDATES = tuple(range(1, 33))
 
 @functools.cache
 def _sm_count(device: torch.device) -> int:
+    if device.type == "musa":
+        return torch.musa.get_device_properties(device).multi_processor_count
     return torch.cuda.get_device_properties(device).multi_processor_count
 
 
