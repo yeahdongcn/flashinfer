@@ -721,7 +721,10 @@ class SSDCombined:
                         self.chunk_size, x.shape[2], x.shape[3],
                     ).permute(0, 3, 4, 1, 2)
                 )
-                result = (native_out, result[1])
+                result = (
+                    native_out.permute(0, 3, 4, 1, 2).reshape_as(x),
+                    result[1],
+                )
             return result
 
         if self._backend == "cake":
