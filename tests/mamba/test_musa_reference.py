@@ -9,6 +9,7 @@ TEST_DEVICE = torch.device(os.environ.get("FLASHINFER_MAMBA_TEST_DEVICE", "cpu")
 
 from flashinfer.mamba.musa_reference import (  # noqa: E402
     ssd_combined_fwd_musa_reference,
+    ssd_combined_fwd_varlen_musa_reference,
     selective_state_update_musa_reference,
 )
 
@@ -71,8 +72,9 @@ def test_musa_reference_single_token_updates_selected_slot():
 def test_musa_reference_mtp_writes_destination_slots_and_intermediates():
     state, x, dt, A, B, C, D, bias = _inputs(batch=1, steps=3)
     out = torch.empty_like(x)
-    read = torch.tensor([2], dtype=torch.int32, device=TEST_DEVICE)
+    read = torch.tensor([[2, 3, 4]], dtype=torch.int32, device=TEST_DEVICE)
     destinations = torch.tensor([[4, 5, 6]], dtype=torch.int32, device=TEST_DEVICE)
+    accepted = torch.tensor([1], dtype=torch.int32, device=TEST_DEVICE)
     intermediate = torch.empty(
         1, 3, *state.shape[1:], dtype=state.dtype, device=TEST_DEVICE
     )
@@ -101,6 +103,7 @@ def test_musa_reference_mtp_writes_destination_slots_and_intermediates():
         3,
         None,
         None,
+        accepted,
     )
 
     assert result.shape == x.shape
@@ -139,4 +142,57 @@ def test_musa_reference_ssd_returns_final_state_and_respects_gate():
     assert final.shape == initial.shape
     assert final.dtype == initial.dtype
     assert torch.isfinite(output).all()
+    assert torch.isfinite(final).all()
+
+
+def test_musa_reference_ssd_varlen_returns_chunk_or_final_states():
+    torch.manual_seed(2)
+    heads, dim, dstate, groups = 2, 3, 4, 1
+    lengths = [3, 2]
+    tokens = sum(lengths)
+    x = torch.randn(tokens, heads, dim, dtype=torch.bfloat16, device=TEST_DEVICE)
+    dt = torch.randn(tokens, heads, dtype=torch.float32, device=TEST_DEVICE)
+    A = -torch.rand(heads, dtype=torch.float32, device=TEST_DEVICE) - 1
+    B = torch.randn(tokens, groups, dstate, dtype=torch.bfloat16, device=TEST_DEVICE)
+    C = torch.randn_like(B)
+    initial = torch.randn(2, heads, dim, dstate, dtype=torch.float16, device=TEST_DEVICE)
+    cu_seqlens = torch.tensor([0, 3, 5], dtype=torch.int32, device=TEST_DEVICE)
+    cu_chunk_seqlens = torch.tensor([0, 2, 3, 5], dtype=torch.int32, device=TEST_DEVICE)
+    last_chunk_indices = torch.tensor([1, 2], dtype=torch.int32, device=TEST_DEVICE)
+    seq_idx = torch.tensor([0, 0, 1], dtype=torch.int32, device=TEST_DEVICE)
+    out = torch.empty_like(x)
+
+    intermediate = ssd_combined_fwd_varlen_musa_reference(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        3,
+        cu_seqlens,
+        cu_chunk_seqlens,
+        last_chunk_indices,
+        seq_idx,
+        out=out,
+        initial_states=initial,
+        return_intermediate_states=True,
+    )
+    final = ssd_combined_fwd_varlen_musa_reference(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        3,
+        cu_seqlens,
+        cu_chunk_seqlens,
+        last_chunk_indices,
+        seq_idx,
+        out=torch.empty_like(x),
+        initial_states=initial,
+        return_intermediate_states=False,
+    )
+    assert intermediate.shape == (3, heads, dim, dstate)
+    assert final.shape == (2, heads, dim, dstate)
+    assert torch.isfinite(intermediate).all()
     assert torch.isfinite(final).all()

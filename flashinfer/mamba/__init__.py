@@ -31,8 +31,12 @@ __all__ = [
 ]
 
 try:
-    from .ssd_combined import SSDCombined, ssd_combined_fwd
+    from .ssd_combined import (
+        SSDCombined,
+        ssd_combined_fwd,
+        ssd_combined_fwd_varlen,
+    )
 
-    __all__.extend(("SSDCombined", "ssd_combined_fwd"))
+    __all__.extend(("SSDCombined", "ssd_combined_fwd", "ssd_combined_fwd_varlen"))
 except ImportError:
     pass

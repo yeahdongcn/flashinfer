@@ -60,29 +60,62 @@ def selective_state_update_musa_reference(
     state_scale: Optional[torch.Tensor],
     intermediate_state_scales: Optional[torch.Tensor],
     rand_seed: Optional[torch.Tensor],
+    philox_rounds: int,
     cache_steps: int,
     cu_seqlens: Optional[torch.Tensor],
     num_accepted_tokens: Optional[torch.Tensor],
 ) -> torch.Tensor:
     """Reference SSU implementation for MUSA bring-up.
 
-    The function supports the unquantized state paths used by Mamba2 and keeps
-    all recurrence arithmetic in fp32.  Quantized state and stochastic
-    rounding are rejected until their native MUSA kernels are available.
+    The function keeps recurrence arithmetic in fp32 and mirrors the public
+    state/index/replay contract.  Native MUSA kernels will replace this slow
+    reference implementation behind the same boundary.
     """
     if state.dtype not in (torch.float16, torch.bfloat16, torch.float32):
         raise NotImplementedError("MUSA SSU bring-up supports fp16/bf16/fp32 state only")
     if state_scale is not None or intermediate_state_scales is not None:
         raise NotImplementedError("MUSA SSU bring-up does not support scaled state yet")
-    if rand_seed is not None:
-        raise NotImplementedError("MUSA SSU stochastic rounding is not implemented yet")
-    if num_accepted_tokens is not None:
-        # The native MTP kernel will add replay-specific initial-token selection.
-        raise NotImplementedError("MUSA SSU bring-up does not support speculative replay yet")
+    if state_scale is not None or intermediate_state_scales is not None:
+        raise NotImplementedError("scaled state is not part of the initial MUSA API port")
 
     if state.dim() != 4:
         raise ValueError(f"state must be [slots, heads, dim, dstate], got {state.shape}")
     slots, nheads, dim, dstate = state.shape
+
+    def cast_state(value: torch.Tensor) -> torch.Tensor:
+        if rand_seed is None or value.dtype not in (torch.float16, torch.bfloat16):
+            return value.to(state.dtype)
+        # Reference stochastic cast.  Native kernels will use the exact
+        # device Philox sequence; this preserves the public seed/rounds
+        # contract while keeping the bring-up path device-independent.
+        mantissa_bits = 10 if state.dtype == torch.float16 else 7
+        magnitude = value.abs().clamp_min(torch.finfo(torch.float32).tiny)
+        exponent = torch.floor(torch.log2(magnitude))
+        step = torch.pow(2.0, exponent - mantissa_bits)
+        lower = torch.floor(value / step) * step
+        probability = ((value - lower) / step).clamp(0, 1)
+        try:
+            generator = torch.Generator(device=value.device)
+            generator.manual_seed(int(rand_seed.reshape(-1)[0].item()) + philox_rounds)
+            random = torch.rand(value.shape, device=value.device, generator=generator)
+        except (RuntimeError, TypeError):
+            random = torch.rand(value.shape, device=value.device)
+        rounded = torch.where(random < probability, lower + step, lower)
+        return rounded.to(state.dtype)
+
+    def read_state(state_slot: int) -> torch.Tensor:
+        if state_slot == pad_slot_id:
+            return torch.zeros((nheads, dim, dstate), dtype=torch.float32, device=state.device)
+        if state_slot < 0 or state_slot >= slots:
+            raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
+        return state[state_slot].to(torch.float32).clone()
+
+    def write_state(state_slot: int, value: torch.Tensor) -> None:
+        if disable_state_update or state_slot == pad_slot_id:
+            return
+        if state_slot < 0 or state_slot >= slots:
+            raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
+        state[state_slot].copy_(cast_state(value))
 
     is_varlen = cu_seqlens is not None and x.dim() == 3 and dt.dim() == 3
     is_mtp = x.dim() == 4
@@ -128,14 +161,7 @@ def selective_state_update_musa_reference(
         )
 
     def update_one(batch_idx: int, token_idx: int, state_slot: int) -> torch.Tensor:
-        if state_slot == pad_slot_id:
-            running = torch.zeros(
-                (nheads, dim, dstate), dtype=torch.float32, device=state.device
-            )
-        else:
-            if state_slot < 0 or state_slot >= slots:
-                raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
-            running = state[state_slot].to(torch.float32).clone()
+        running = read_state(state_slot)
 
         for h in range(nheads):
             g = h // group_ratio
@@ -183,7 +209,12 @@ def selective_state_update_musa_reference(
         return running
 
     for b, (start, end) in enumerate(steps):
-        read_slot = _index_for(state_batch_indices, b, 0, b)
+        accepted = (
+            int(num_accepted_tokens[b].item())
+            if num_accepted_tokens is not None
+            else 0
+        )
+        read_slot = _index_for(state_batch_indices, b, accepted, b)
         running = None
         for token in range(end - start):
             token_idx = start + token if is_varlen else token
@@ -193,7 +224,7 @@ def selective_state_update_musa_reference(
             else:
                 write_slot = _index_for(dst_state_batch_indices, b, 0, read_slot)
             if not disable_state_update and write_slot != pad_slot_id:
-                state[write_slot].copy_(running.to(state.dtype))
+                write_state(write_slot, running)
                 read_slot = write_slot
             if intermediate_states_buffer is not None:
                 cache_slot = (
@@ -201,9 +232,7 @@ def selective_state_update_musa_reference(
                     if intermediate_state_indices is not None
                     else b
                 )
-                intermediate_states_buffer[cache_slot, token].copy_(
-                    running.to(intermediate_states_buffer.dtype)
-                )
+                intermediate_states_buffer[cache_slot, token].copy_(cast_state(running))
     return out
 
 
@@ -355,3 +384,122 @@ def ssd_combined_fwd_musa_reference(
         else:
             final[missing] = 0
     return out, final if return_final_states else None
+
+
+def ssd_combined_fwd_varlen_musa_reference(
+    x: torch.Tensor,
+    dt: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    chunk_size: int,
+    cu_seqlens: torch.Tensor,
+    cu_chunk_seqlens: torch.Tensor,
+    last_chunk_indices: torch.Tensor,
+    seq_idx: torch.Tensor,
+    out: Optional[torch.Tensor] = None,
+    D: Optional[torch.Tensor] = None,
+    z: Optional[torch.Tensor] = None,
+    dt_bias: Optional[torch.Tensor] = None,
+    dt_softplus: bool = False,
+    dt_limit: tuple[float, float] = (0.0, float("inf")),
+    initial_states: Optional[torch.Tensor] = None,
+    return_intermediate_states: bool = False,
+) -> torch.Tensor:
+    """Packed/varlen SSD API matching vLLM's Mamba2 prefill contract."""
+    if x.dim() != 3 or dt.dim() != 2 or B.dim() != 3 or C.dim() != 3:
+        raise ValueError("varlen SSD expects packed x/dt/B/C tensors")
+    tokens, nheads, headdim = x.shape
+    nchunks = cu_chunk_seqlens.numel() - 1
+    if dt.shape != (tokens, nheads) or B.shape != C.shape:
+        raise ValueError("packed SSD tensor shapes do not match")
+    ngroups, dstate = B.shape[1:]
+    if nheads % ngroups or A.shape != (nheads,):
+        raise ValueError("A/groups are incompatible with the packed head count")
+    if cu_seqlens.numel() != last_chunk_indices.numel() + 1:
+        raise ValueError("cu_seqlens and last_chunk_indices do not describe the same batch")
+    if seq_idx.numel() != nchunks:
+        raise ValueError("seq_idx must contain one sequence id per physical chunk")
+    if torch.any(cu_chunk_seqlens[1:] < cu_chunk_seqlens[:-1]) or int(cu_chunk_seqlens[-1]) != tokens:
+        raise ValueError("cu_chunk_seqlens must be monotonic and end at x.shape[0]")
+
+    if out is None:
+        out = torch.empty_like(x)
+    if initial_states is not None:
+        if initial_states.dim() != 4 or initial_states.shape[1:] != (
+            nheads,
+            headdim,
+            dstate,
+        ):
+            raise ValueError("initial_states must be [num_sequences, heads, headdim, dstate]")
+        state_dtype = initial_states.dtype
+        initial = initial_states.to(torch.float32)
+    else:
+        state_dtype = torch.float32
+        initial = None
+
+    if D is not None:
+        D_f = D.to(torch.float32)
+        if D_f.dim() == 1:
+            D_f = D_f[:, None].expand(nheads, headdim)
+        if D_f.shape != (nheads, headdim):
+            raise ValueError("D must have shape [heads] or [heads, headdim]")
+    else:
+        D_f = None
+    bias = None if dt_bias is None else dt_bias.to(torch.float32).reshape(1, nheads)
+    ratio = nheads // ngroups
+    A_f = A.to(torch.float32)
+    states = torch.empty(
+        nchunks, nheads, headdim, dstate, dtype=state_dtype, device=x.device
+    )
+    state_by_sequence: dict[int, torch.Tensor] = {}
+    seen_sequences: set[int] = set()
+
+    for chunk in range(nchunks):
+        sequence = int(seq_idx[chunk].item())
+        start = int(cu_chunk_seqlens[chunk].item())
+        end = int(cu_chunk_seqlens[chunk + 1].item())
+        if end - start > chunk_size:
+            raise ValueError("a physical chunk exceeds chunk_size")
+        if sequence not in seen_sequences:
+            if initial is None:
+                running = torch.zeros(
+                    nheads, headdim, dstate, dtype=torch.float32, device=x.device
+                )
+            else:
+                running = initial[sequence].clone()
+            seen_sequences.add(sequence)
+        else:
+            running = state_by_sequence[sequence]
+
+        for token in range(start, end):
+            delta = dt[token].to(torch.float32)
+            if bias is not None:
+                delta = delta + bias[0]
+            if dt_softplus:
+                delta = _softplus(delta)
+            delta = delta.clamp(dt_limit[0], dt_limit[1])
+            for head in range(nheads):
+                group = head // ratio
+                running[head] = running[head] * torch.exp(A_f[head] * delta[head])
+                running[head] += (
+                    (delta[head] * x[token, head].to(torch.float32))[:, None]
+                    * B[token, group].to(torch.float32)[None, :]
+                )
+                y = torch.sum(
+                    C[token, group].to(torch.float32)[None, :]
+                    * running[head],
+                    dim=-1,
+                )
+                if D_f is not None:
+                    y = y + D_f[head] * x[token, head].to(torch.float32)
+                if z is not None:
+                    z_t = z[token, head].to(torch.float32)
+                    y = y * z_t * torch.sigmoid(z_t)
+                out[token, head].copy_(y.to(out.dtype))
+        state_by_sequence[sequence] = running
+        states[chunk].copy_(running.to(state_dtype))
+
+    if return_intermediate_states:
+        return states
+    return states.index_select(0, last_chunk_indices.to(torch.int64))

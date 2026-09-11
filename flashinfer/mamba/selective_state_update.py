@@ -275,7 +275,7 @@ def selective_state_update(
     if rand_seed is not None:
         if not isinstance(rand_seed, torch.Tensor):
             raise TypeError(
-                f"rand_seed must be a CUDA int64 tensor, got {type(rand_seed).__name__}"
+                f"rand_seed must be a CUDA/MUSA int64 tensor, got {type(rand_seed).__name__}"
             )
         if rand_seed.numel() != 1:
             raise ValueError(
@@ -283,8 +283,8 @@ def selective_state_update(
             )
         if rand_seed.dtype != torch.int64:
             raise ValueError(f"rand_seed must have dtype int64, got {rand_seed.dtype}")
-        if not rand_seed.is_cuda:
-            raise ValueError("rand_seed must be a CUDA tensor")
+        if rand_seed.device.type not in ("cuda", "musa"):
+            raise ValueError("rand_seed must be a CUDA or MUSA tensor")
         if state_scale is not None:
             raise ValueError("rand_seed and state_scale cannot both be provided")
         if philox_rounds <= 0:
@@ -334,6 +334,7 @@ def selective_state_update(
             state_scale,
             intermediate_state_scales,
             rand_seed,
+            philox_rounds,
             cache_steps,
             cu_seqlens,
             num_accepted_tokens,

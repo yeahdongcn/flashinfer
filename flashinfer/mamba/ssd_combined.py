@@ -1066,3 +1066,57 @@ def ssd_combined_fwd(
         out=out,
         return_final_states=return_final_states,
     )
+
+
+def ssd_combined_fwd_varlen(
+    x: torch.Tensor,
+    dt: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    chunk_size: int,
+    cu_seqlens: torch.Tensor,
+    cu_chunk_seqlens: torch.Tensor,
+    last_chunk_indices: torch.Tensor,
+    seq_idx: torch.Tensor,
+    D: Optional[torch.Tensor] = None,
+    z: Optional[torch.Tensor] = None,
+    dt_bias: Optional[torch.Tensor] = None,
+    dt_softplus: bool = False,
+    dt_limit: tuple[float, float] = (0.0, float("inf")),
+    initial_states: Optional[torch.Tensor] = None,
+    out: Optional[torch.Tensor] = None,
+    return_intermediate_states: bool = False,
+) -> torch.Tensor:
+    """Packed SSD API matching vLLM's Mamba2 varlen prefill contract.
+
+    The CUDA CuTe runner has a separate varlen contract.  MUSA uses this
+    explicit entry point so vLLM can share its packed metadata without
+    converting sequences back to a padded batch.
+    """
+    if x.device.type != "musa":
+        raise NotImplementedError(
+            "ssd_combined_fwd_varlen is currently implemented for the MUSA provider"
+        )
+    from .musa_reference import ssd_combined_fwd_varlen_musa_reference
+
+    return ssd_combined_fwd_varlen_musa_reference(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        chunk_size,
+        cu_seqlens,
+        cu_chunk_seqlens,
+        last_chunk_indices,
+        seq_idx,
+        out=out,
+        D=D,
+        z=z,
+        dt_bias=dt_bias,
+        dt_softplus=dt_softplus,
+        dt_limit=dt_limit,
+        initial_states=initial_states,
+        return_intermediate_states=return_intermediate_states,
+    )
