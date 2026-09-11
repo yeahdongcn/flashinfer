@@ -11,14 +11,14 @@ import torch
 
 import flashinfer
 from flashinfer.utils import is_cvt_rs_supported, is_sm100a_supported
+from .utils import TEST_DEVICE, create_test_inputs, clone_preserving_strides
 
 _requires_sm100 = pytest.mark.skipif(
-    not is_sm100a_supported(torch.device("cuda")),
+    not is_sm100a_supported(torch.device(TEST_DEVICE)),
     reason="Vertical/horizontal MTP kernel requires SM100+ (Blackwell)",
 )
 
 from .triton_reference.selective_state_update import selective_state_update_triton
-from .utils import create_test_inputs, clone_preserving_strides
 
 
 # Base combination: batch=64, nheads=64, dim=64, dstate=128, cache_steps=4,
@@ -40,6 +40,15 @@ _BASE_PARAMS = (
     (  64,    64,     64,  128,    4,           torch.float16,      torch.float32,  True ),  # state_dtype=f16
     (  64,    64,     64,  128,    4,           torch.bfloat16,     torch.float32,  False),  # use_out_tensor=False
 )
+if TEST_DEVICE == "musa":
+    _BASE_PARAMS = (
+        (2, 8, 8, 16, 3, torch.bfloat16, torch.float32, True),
+        (1, 8, 8, 16, 3, torch.bfloat16, torch.float32, True),
+        (2, 8, 8, 16, 1, torch.bfloat16, torch.float32, True),
+        (2, 8, 8, 16, 4, torch.float32, torch.float32, True),
+        (2, 8, 8, 16, 3, torch.float16, torch.float32, True),
+        (2, 8, 8, 16, 3, torch.bfloat16, torch.float32, False),
+    )
 # fmt: on
 
 
@@ -1191,7 +1200,7 @@ class TestSelectiveStateUpdateMTPStochasticRounding(TestSelectiveStateUpdateMTP)
     ATOL = 0.001
     RTOL = 0.01
 
-    RAND_SEED = torch.tensor(42, dtype=torch.int64, device="cuda")
+    RAND_SEED = torch.tensor(42, dtype=torch.int64, device=TEST_DEVICE)
 
     def make_inputs(
         self, batch, nheads, dim, dstate, cache_steps, _state_dtype, weight_dtype
@@ -1327,7 +1336,7 @@ class TestSelectiveStateUpdateMTPStochasticRoundingWithIntermediateStates(
     ATOL = 0.001
     RTOL = 0.01
 
-    RAND_SEED = torch.tensor(42, dtype=torch.int64, device="cuda")
+    RAND_SEED = torch.tensor(42, dtype=torch.int64, device=TEST_DEVICE)
 
     def make_inputs(
         self, batch, nheads, dim, dstate, cache_steps, _state_dtype, weight_dtype
