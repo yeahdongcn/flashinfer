@@ -6,6 +6,7 @@ import flashinfer
 from flashinfer.utils import get_compute_capability, is_cvt_rs_supported
 
 from .triton_reference.selective_state_update import selective_state_update_triton
+from .independent_reference import ssu_one_token
 from .utils import TEST_DEVICE, create_test_inputs, clone_preserving_strides
 
 
@@ -81,6 +82,13 @@ class TestSelectiveStateUpdate:
 
     def make_reference_output(self, inputs):
         """Compute reference output using triton implementation."""
+        if TEST_DEVICE == "musa":
+            y_ref, state_ref, scale_ref = ssu_one_token(
+                inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
+                inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
+                inputs["slot_idx"], state_scale=inputs.get("state_scale"),
+            )
+            return (y_ref, state_ref, scale_ref) if "state_scale" in inputs else (y_ref, state_ref)
         state_ref = inputs["state_cache"].clone()
         y_ref = selective_state_update_triton(
             state_ref,
@@ -384,6 +392,13 @@ class TestSelectiveStateUpdateNonContiguous(TestSelectiveStateUpdate):
 
     def make_reference_output(self, inputs):
         """Compute reference output, preserving non-contiguous strides."""
+        if TEST_DEVICE == "musa":
+            y_ref, state_ref, scale_ref = ssu_one_token(
+                inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
+                inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
+                inputs["slot_idx"], state_scale=inputs.get("state_scale"),
+            )
+            return (y_ref, state_ref, scale_ref) if "state_scale" in inputs else (y_ref, state_ref)
         state_ref = clone_preserving_strides(inputs["state_cache"])
         y_ref = selective_state_update_triton(
             state_ref,
@@ -529,6 +544,13 @@ class TestSelectiveStateUpdateInt16(TestSelectiveStateUpdate):
 
     def make_reference_output(self, inputs):
         """Compute reference output using Triton with state_scale."""
+        if TEST_DEVICE == "musa":
+            y_ref, state_ref, scale_ref = ssu_one_token(
+                inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
+                inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
+                inputs["slot_idx"], state_scale=inputs["state_scale"],
+            )
+            return y_ref, state_ref, scale_ref
         state_ref = inputs["state_cache"].clone()
         state_scale_ref = inputs["state_scale"].clone()
         y_ref = selective_state_update_triton(
@@ -690,7 +712,15 @@ class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
         )
 
     def make_reference_output(self, inputs):
-        """Compute reference output using Triton with stochastic rounding."""
+        """Compute reference output using Triton with stochastic rounding.
+        """
+        if TEST_DEVICE == "musa":
+            y_ref, state_ref, scale_ref = ssu_one_token(
+                inputs["state_cache"], inputs["x"], inputs["dt"], inputs["A"],
+                inputs["B"], inputs["C"], inputs["D"], inputs["dt_bias"],
+                inputs["slot_idx"], state_scale=inputs.get("state_scale"),
+            )
+            return y_ref, state_ref
         state_ref = inputs["state_cache"].clone()
         # Triton cvt.rs.f16x2.f32 requires SM100a (non-forward-compatible);
         # on unsupported GPUs the Triton reference falls back to regular
