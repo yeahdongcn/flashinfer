@@ -699,9 +699,56 @@ class CakeSSDCombined:
     ):
         if x.device.type == "musa":
             if x.dim() != 4:
-                raise NotImplementedError(
-                    "MUSA Cake compatibility path requires padded [B,S,H,D] input"
+                if x.dim() != 3 or seq_idx is None:
+                    raise ValueError("MUSA Cake packed path requires x[T,H,D] and seq_idx[T]")
+                from .ssd_combined import ssd_combined_fwd_varlen
+
+                seq_tokens = seq_idx.reshape(-1).to(torch.int64)
+                if seq_tokens.numel() != x.shape[0]:
+                    raise ValueError("packed seq_idx must contain one id per token")
+                boundaries = [0]
+                for token in range(1, x.shape[0]):
+                    if int(seq_tokens[token]) != int(seq_tokens[token - 1]):
+                        boundaries.append(token)
+                boundaries.append(x.shape[0])
+                cu_seqlens = torch.tensor(boundaries, device=x.device, dtype=torch.int32)
+                if chunk_offsets is not None and chunk_offsets.numel() >= 2:
+                    cu_chunk_seqlens = chunk_offsets.to(torch.int32)
+                else:
+                    cu_chunk_seqlens = torch.tensor(
+                        [0, x.shape[0]], device=x.device, dtype=torch.int32
+                    )
+                num_chunks = cu_chunk_seqlens.numel() - 1
+                chunk_ids = seq_tokens.new_zeros(num_chunks)
+                for chunk in range(num_chunks):
+                    chunk_ids[chunk] = seq_tokens[int(cu_chunk_seqlens[chunk])]
+                last = torch.stack(
+                    [
+                        (chunk_ids == sequence).nonzero(as_tuple=False)[-1, 0]
+                        for sequence in torch.unique(seq_tokens)
+                    ]
+                ).to(torch.int32)
+                final_states = ssd_combined_fwd_varlen(
+                    x,
+                    dt,
+                    A,
+                    B,
+                    C,
+                    self.chunk_size,
+                    cu_seqlens,
+                    cu_chunk_seqlens,
+                    last,
+                    chunk_ids.to(torch.int32),
+                    D=D,
+                    z=z,
+                    dt_bias=dt_bias,
+                    dt_softplus=dt_softplus,
+                    dt_limit=dt_limit,
+                    initial_states=initial_states,
+                    out=out,
+                    return_intermediate_states=not return_final_states,
                 )
+                return out, final_states
             if any(
                 value is not None
                 for value in (checkpoint_token_indices, checkpoint_state_slots, checkpoint_states)

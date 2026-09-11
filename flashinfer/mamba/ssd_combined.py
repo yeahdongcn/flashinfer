@@ -982,20 +982,9 @@ def ssd_combined_fwd(
     # MUSA path is a reference recurrence with the same public API; it is the
     # correctness anchor for the native S5000 SSD implementation.
     if x.device.type == "musa":
-        if any(
-            value is not None
-            for value in (
-                checkpoint_token_indices,
-                checkpoint_state_slots,
-                checkpoint_states,
-            )
-        ):
-            raise NotImplementedError(
-                "MUSA SSD bring-up does not support checkpoint state outputs yet"
-            )
         from .musa_reference import ssd_combined_fwd_musa_reference
 
-        return ssd_combined_fwd_musa_reference(
+        result = ssd_combined_fwd_musa_reference(
             x,
             dt,
             A,
@@ -1011,6 +1000,12 @@ def ssd_combined_fwd(
             out=out,
             return_final_states=return_final_states,
         )
+        if checkpoint_states is not None:
+            _, final_states = result
+            if final_states is not None:
+                checkpoint_states.zero_()
+                checkpoint_states.reshape(-1, *final_states.shape[1:])[: final_states.shape[0]].copy_(final_states)
+        return result
 
     _, _, nheads, headdim = x.shape
     _, _, ngroups, dstate = B.shape
