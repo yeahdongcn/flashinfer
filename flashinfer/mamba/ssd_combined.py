@@ -344,6 +344,10 @@ class SSDCombined:
             raise ValueError(
                 f"SSDCombined backend must be 'cute' or 'cake', got {backend!r}"
             )
+        if musa_runtime and backend == "cute":
+            self._seq_cumsum_key = None
+            self._seq_cumsum_buf = None
+            return
         if backend == "cake":
             from .cake_ssd_combined import CakeSSDCombined
 
