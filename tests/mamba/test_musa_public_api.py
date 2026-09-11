@@ -10,6 +10,7 @@ if os.environ.get("FLASHINFER_MAMBA_TEST_DEVICE") != "musa":
 
 from flashinfer.mamba import (  # noqa: E402
     CakeSSDCombined,
+    cake_selective_state_update,
     mamba_chunk_scan_combined_varlen,
     selective_state_update,
     ssd_combined_fwd,
@@ -75,6 +76,23 @@ def test_selective_state_update_philox_reproducibility():
         rand_seed=seed, philox_rounds=5,
     )
     torch.testing.assert_close(state_a, state_b, rtol=0, atol=0)
+
+
+def test_cake_selective_state_update_public_api_on_musa():
+    x, dt, A, B, C, D_skip = _ssu_inputs()
+    state = torch.zeros(8, H, D, N, device=DEVICE, dtype=torch.float16)
+    y = cake_selective_state_update(
+        state,
+        x,
+        dt,
+        A,
+        B,
+        C,
+        D=D_skip,
+        state_batch_indices=torch.tensor([2], device=DEVICE, dtype=torch.int32),
+    )
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
 
 
 def test_selective_state_update_mtp_replay_with_intermediate_states():
