@@ -319,6 +319,9 @@ def ssd_combined_fwd_musa_reference(
     seq_idx: Optional[torch.Tensor] = None,
     out: Optional[torch.Tensor] = None,
     return_final_states: bool = True,
+    checkpoint_token_indices: Optional[torch.Tensor] = None,
+    checkpoint_state_slots: Optional[torch.Tensor] = None,
+    checkpoint_states: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Reference Mamba2 SSD forward for the initial MUSA port.
 
@@ -370,6 +373,13 @@ def ssd_combined_fwd_musa_reference(
         out = torch.empty_like(x)
     if out.shape != x.shape:
         raise ValueError("out must have the same shape as x")
+    if checkpoint_states is not None:
+        if checkpoint_token_indices is None or checkpoint_state_slots is None:
+            raise ValueError("checkpoint token indices, slots, and states are required together")
+        if checkpoint_token_indices.shape != (batch,) or checkpoint_state_slots.shape != (batch,):
+            raise ValueError("checkpoint metadata must have one entry per batch sequence")
+        if checkpoint_states.ndim != 4 or checkpoint_states.shape[1:] != (nheads, headdim, dstate):
+            raise ValueError("checkpoint_states has incompatible state shape")
 
     bias = None if dt_bias is None else dt_bias.reshape(1, 1, nheads).to(torch.float32)
     d_head = None
@@ -437,6 +447,13 @@ def ssd_combined_fwd_musa_reference(
             z_t = z[:, token].to(torch.float32)
             y = y * z_t * torch.sigmoid(z_t)
         out[:, token].copy_(y.to(out.dtype))
+
+        if checkpoint_states is not None:
+            for sequence in range(batch):
+                if int(checkpoint_token_indices[sequence].item()) == token + 1:
+                    slot = int(checkpoint_state_slots[sequence].item())
+                    if slot >= 0:
+                        checkpoint_states[slot].copy_(state[sequence].to(checkpoint_states.dtype))
 
         if seq_idx is None:
             final.copy_(state.to(state_dtype))

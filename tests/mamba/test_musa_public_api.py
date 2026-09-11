@@ -12,6 +12,7 @@ from flashinfer.mamba import (  # noqa: E402
     CakeSSDCombined,
     mamba_chunk_scan_combined_varlen,
     selective_state_update,
+    ssd_combined_fwd,
 )
 
 
@@ -206,3 +207,27 @@ def test_cake_ssd_packed_varlen_metadata_on_musa():
     assert final.shape == (2, H, D, N)
     assert torch.isfinite(out).all()
     assert torch.isfinite(final).all()
+
+
+def test_ssd_checkpoint_token_and_slot_on_musa():
+    batch, seqlen = 1, 4
+    x = torch.randn(batch, seqlen, H, D, device=DEVICE, dtype=torch.bfloat16)
+    dt = torch.randn(batch, seqlen, H, device=DEVICE, dtype=torch.float32)
+    A = -torch.rand(H, device=DEVICE, dtype=torch.float32) - 1
+    B = torch.randn(batch, seqlen, G, N, device=DEVICE, dtype=torch.bfloat16)
+    C = torch.randn_like(B)
+    checkpoint = torch.zeros(1, H, D, N, device=DEVICE, dtype=torch.float16)
+    out, final = ssd_combined_fwd(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        checkpoint_token_indices=torch.tensor([2], device=DEVICE, dtype=torch.int32),
+        checkpoint_state_slots=torch.tensor([0], device=DEVICE, dtype=torch.int32),
+        checkpoint_states=checkpoint,
+    )
+    assert out.shape == x.shape
+    assert final.shape == (batch, H, D, N)
+    assert torch.isfinite(checkpoint).all()
+    assert torch.any(checkpoint != 0)

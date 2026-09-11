@@ -690,10 +690,6 @@ class SSDCombined:
         if x.device.type == "musa":
             from .musa_reference import ssd_combined_fwd_musa_reference
 
-            if checkpoint_token_indices is not None or checkpoint_state_slots is not None:
-                raise NotImplementedError(
-                    "MUSA SSD checkpoint token/state-slot outputs are not implemented"
-                )
             if chunk_indices is not None or chunk_offsets is not None:
                 if seq_idx is None:
                     raise ValueError("chunk metadata requires seq_idx on MUSA SSD")
@@ -725,6 +721,9 @@ class SSDCombined:
                 seq_idx=seq_idx,
                 out=token_out,
                 return_final_states=return_final_states,
+                checkpoint_token_indices=checkpoint_token_indices,
+                checkpoint_state_slots=checkpoint_state_slots,
+                checkpoint_states=checkpoint_states,
             )
             if native_out is not None and native_out.shape != x.shape:
                 token_out = result[0]
@@ -1056,10 +1055,6 @@ def ssd_combined_fwd(
     # MUSA path is a reference recurrence with the same public API; it is the
     # correctness anchor for the native S5000 SSD implementation.
     if x.device.type == "musa":
-        if checkpoint_token_indices is not None or checkpoint_state_slots is not None:
-            raise NotImplementedError(
-                "MUSA SSD checkpoint token/state-slot outputs are not implemented"
-            )
         if chunk_indices is not None or chunk_offsets is not None:
             if seq_idx is None:
                 raise ValueError("chunk metadata requires seq_idx on MUSA SSD")
@@ -1084,12 +1079,10 @@ def ssd_combined_fwd(
             seq_idx=seq_idx,
             out=out,
             return_final_states=return_final_states,
+            checkpoint_token_indices=checkpoint_token_indices,
+            checkpoint_state_slots=checkpoint_state_slots,
+            checkpoint_states=checkpoint_states,
         )
-        if checkpoint_states is not None:
-            _, final_states = result
-            if final_states is not None:
-                checkpoint_states.zero_()
-                checkpoint_states.reshape(-1, *final_states.shape[1:])[: final_states.shape[0]].copy_(final_states)
         return result
 
     _, _, nheads, headdim = x.shape
