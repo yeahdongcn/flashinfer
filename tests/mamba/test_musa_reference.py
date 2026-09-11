@@ -5,6 +5,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from flashinfer.mamba.musa_reference import (  # noqa: E402
+    ssd_combined_fwd_musa_reference,
     selective_state_update_musa_reference,
 )
 
@@ -102,3 +103,35 @@ def test_musa_reference_mtp_writes_destination_slots_and_intermediates():
     assert torch.isfinite(intermediate).all()
     assert not torch.equal(state[4], state[5])
     assert not torch.equal(state[5], state[6])
+
+
+def test_musa_reference_ssd_returns_final_state_and_respects_gate():
+    torch.manual_seed(1)
+    batch, seqlen, heads, dim, dstate, groups = 2, 4, 2, 3, 4, 1
+    x = torch.randn(batch, seqlen, heads, dim, dtype=torch.bfloat16)
+    dt = torch.randn(batch, seqlen, heads, dtype=torch.float32)
+    A = -torch.rand(heads, dtype=torch.float32) - 1
+    B = torch.randn(batch, seqlen, groups, dstate, dtype=torch.bfloat16)
+    C = torch.randn_like(B)
+    D = torch.randn(heads, dim, dtype=torch.bfloat16)
+    z = torch.randn_like(x)
+    initial = torch.randn(batch, heads, dim, dstate, dtype=torch.float16)
+
+    output, final = ssd_combined_fwd_musa_reference(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        D=D,
+        z=z,
+        dt_softplus=True,
+        initial_states=initial,
+    )
+
+    assert output.shape == x.shape
+    assert final is not None
+    assert final.shape == initial.shape
+    assert final.dtype == initial.dtype
+    assert torch.isfinite(output).all()
+    assert torch.isfinite(final).all()

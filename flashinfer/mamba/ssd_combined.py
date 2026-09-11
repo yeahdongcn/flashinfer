@@ -962,6 +962,40 @@ def ssd_combined_fwd(
         when ``return_final_states`` is false.
     """
 
+    # Keep MUSA tensors away from the CUDA CuTe/Cake launcher.  The initial
+    # MUSA path is a reference recurrence with the same public API; it is the
+    # correctness anchor for the native S5000 SSD implementation.
+    if x.device.type == "musa":
+        if any(
+            value is not None
+            for value in (
+                checkpoint_token_indices,
+                checkpoint_state_slots,
+                checkpoint_states,
+            )
+        ):
+            raise NotImplementedError(
+                "MUSA SSD bring-up does not support checkpoint state outputs yet"
+            )
+        from .musa_reference import ssd_combined_fwd_musa_reference
+
+        return ssd_combined_fwd_musa_reference(
+            x,
+            dt,
+            A,
+            B,
+            C,
+            D=D,
+            z=z,
+            dt_bias=dt_bias,
+            dt_softplus=dt_softplus,
+            dt_limit=dt_limit,
+            initial_states=initial_states,
+            seq_idx=seq_idx,
+            out=out,
+            return_final_states=return_final_states,
+        )
+
     _, _, nheads, headdim = x.shape
     _, _, ngroups, dstate = B.shape
     state_dtype = (

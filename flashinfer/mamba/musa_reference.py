@@ -201,3 +201,153 @@ def selective_state_update_musa_reference(
                     running.to(intermediate_states_buffer.dtype)
                 )
     return out
+
+
+def ssd_combined_fwd_musa_reference(
+    x: torch.Tensor,
+    dt: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    D: Optional[torch.Tensor] = None,
+    z: Optional[torch.Tensor] = None,
+    dt_bias: Optional[torch.Tensor] = None,
+    dt_softplus: bool = False,
+    dt_limit: tuple[float, float] = (0.0, float("inf")),
+    initial_states: Optional[torch.Tensor] = None,
+    seq_idx: Optional[torch.Tensor] = None,
+    out: Optional[torch.Tensor] = None,
+    return_final_states: bool = True,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Reference Mamba2 SSD forward for the initial MUSA port.
+
+    This implements the same recurrence as SSDCombined without materializing
+    the chunk matrices.  It is intentionally a correctness path; a native
+    MUSA implementation will replace it after the API and reference tests are
+    established.
+    """
+    if x.dim() != 4 or dt.dim() != 3:
+        raise ValueError("x must be [batch, seqlen, heads, headdim] and dt [batch, seqlen, heads]")
+    batch, seqlen, nheads, headdim = x.shape
+    if dt.shape != (batch, seqlen, nheads):
+        raise ValueError("dt shape does not match x")
+    if B.shape != C.shape or B.shape[:2] != (batch, seqlen):
+        raise ValueError("B and C must have shape [batch, seqlen, groups, dstate]")
+    ngroups, dstate = B.shape[2:]
+    if nheads % ngroups:
+        raise ValueError("nheads must be divisible by ngroups")
+    if A.shape != (nheads,):
+        raise ValueError(f"A must have shape [{nheads}]")
+    if z is not None and z.shape != x.shape:
+        raise ValueError("z must have the same shape as x")
+
+    state_dtype = initial_states.dtype if initial_states is not None else torch.bfloat16
+    if state_dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        raise NotImplementedError("MUSA SSD bring-up supports fp16/bf16/fp32 state only")
+    if initial_states is None:
+        num_sequences = batch
+        state = torch.zeros(
+            batch, nheads, headdim, dstate, dtype=torch.float32, device=x.device
+        )
+        initial = None
+    else:
+        if initial_states.dim() != 4 or initial_states.shape[1:] != (
+            nheads,
+            headdim,
+            dstate,
+        ):
+            raise ValueError("initial_states must be [num_sequences, heads, headdim, dstate]")
+        num_sequences = initial_states.shape[0]
+        initial = initial_states.to(torch.float32)
+        state = initial[:batch].clone()
+        if state.shape[0] != batch:
+            state = torch.zeros(
+                batch, nheads, headdim, dstate, dtype=torch.float32, device=x.device
+            )
+
+    if out is None:
+        out = torch.empty_like(x)
+    if out.shape != x.shape:
+        raise ValueError("out must have the same shape as x")
+
+    bias = None if dt_bias is None else dt_bias.reshape(1, 1, nheads).to(torch.float32)
+    d_head = None
+    if D is not None:
+        d_head = D.to(torch.float32)
+        if d_head.dim() == 1:
+            d_head = d_head[:, None].expand(nheads, headdim)
+        if d_head.shape != (nheads, headdim):
+            raise ValueError("D must have shape [heads] or [heads, headdim]")
+
+    # Direct recurrence over tokens.  All state arithmetic remains fp32; only
+    # the externally visible output and final state use the requested dtypes.
+    final = torch.empty(
+        num_sequences, nheads, headdim, dstate, dtype=state_dtype, device=x.device
+    )
+    seen = torch.zeros(num_sequences, dtype=torch.bool, device=x.device)
+    previous_seq = None
+    ratio = nheads // ngroups
+    dt_f = dt.to(torch.float32)
+    for token in range(seqlen):
+        if seq_idx is not None:
+            ids = seq_idx[:, token].to(torch.int64)
+            if ids.numel() != batch:
+                raise ValueError("seq_idx must have shape [batch, seqlen]")
+            changed = torch.ones(batch, dtype=torch.bool, device=x.device)
+            if previous_seq is not None:
+                changed = ids != previous_seq
+            if initial is not None:
+                replacement = initial.index_select(0, ids.clamp_min(0))
+                state = torch.where(changed[:, None, None, None], replacement, state)
+            else:
+                state = torch.where(
+                    changed[:, None, None, None],
+                    torch.zeros_like(state),
+                    state,
+                )
+            previous_seq = ids
+
+        delta = dt_f[:, token]
+        if bias is not None:
+            delta = delta + bias[:, 0]
+        if dt_softplus:
+            delta = _softplus(delta)
+        delta = delta.clamp(dt_limit[0], dt_limit[1])
+        decay = torch.exp(A.to(torch.float32)[None, :, None, None] * delta[:, :, None, None])
+        state = state * decay
+        for head in range(nheads):
+            group = head // ratio
+            state[:, head] += (
+                delta[:, head, None, None]
+                * x[:, token, head].to(torch.float32)[:, :, None]
+                * B[:, token, group].to(torch.float32)[:, None, :]
+            )
+        y = torch.empty(batch, nheads, headdim, dtype=torch.float32, device=x.device)
+        for head in range(nheads):
+            group = head // ratio
+            y[:, head] = torch.sum(
+                C[:, token, group].to(torch.float32)[:, None, :]
+                * state[:, head],
+                dim=-1,
+            )
+        if d_head is not None:
+            y = y + x[:, token].to(torch.float32) * d_head[None]
+        if z is not None:
+            z_t = z[:, token].to(torch.float32)
+            y = y * z_t * torch.sigmoid(z_t)
+        out[:, token].copy_(y.to(out.dtype))
+
+        if seq_idx is None:
+            final.copy_(state.to(state_dtype))
+        else:
+            for sequence in torch.unique(ids).tolist():
+                final[sequence].copy_(state[ids == sequence][0].to(state_dtype))
+                seen[sequence] = True
+
+    if seq_idx is not None and not bool(seen.all()):
+        missing = (~seen).nonzero(as_tuple=False).flatten().tolist()
+        if initial is not None:
+            final[missing] = initial[missing].to(state_dtype)
+        else:
+            final[missing] = 0
+    return out, final if return_final_states else None
