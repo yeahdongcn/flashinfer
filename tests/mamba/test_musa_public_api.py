@@ -158,3 +158,41 @@ def test_cake_ssd_padded_varlen_metadata_on_musa():
     assert final.shape == initial.shape
     assert torch.isfinite(out).all()
     assert torch.isfinite(final).all()
+
+
+def test_cake_ssd_packed_varlen_metadata_on_musa():
+    tokens = 5
+    x = torch.randn(tokens, H, D, device=DEVICE, dtype=torch.bfloat16)
+    dt = torch.randn(tokens, H, device=DEVICE, dtype=torch.float32)
+    A = -torch.rand(H, device=DEVICE, dtype=torch.float32) - 1
+    B = torch.randn(tokens, G, N, device=DEVICE, dtype=torch.bfloat16)
+    C = torch.randn_like(B)
+    runner = CakeSSDCombined(
+        3,
+        H,
+        D,
+        N,
+        G,
+        io_dtype=torch.bfloat16,
+        state_dtype=torch.float16,
+        has_d=False,
+        d_has_hdim=False,
+        has_initial_states=False,
+        has_varlen=True,
+        has_z=False,
+        seq_idx_dtype=torch.int32,
+    )
+    out, final = runner.run(
+        x,
+        dt,
+        A,
+        B,
+        C,
+        seq_idx=torch.tensor([0, 0, 0, 1, 1], device=DEVICE, dtype=torch.int32),
+        chunk_offsets=torch.tensor([0, 3, 5], device=DEVICE, dtype=torch.int32),
+        return_final_states=True,
+    )
+    assert out.shape == x.shape
+    assert final.shape == (2, H, D, N)
+    assert torch.isfinite(out).all()
+    assert torch.isfinite(final).all()
