@@ -313,17 +313,23 @@ def selective_state_update(
     if state.device.type == "musa":
         if algorithm not in ("auto", "simple", "vertical", "horizontal", "async_horizontal"):
             raise ValueError(f"unknown MUSA SSU algorithm={algorithm!r}")
+        fused_state_batch_indices = state_batch_indices
+        fused_dst_state_batch_indices = dst_state_batch_indices
+        if x.dim() == 3 and state_batch_indices is not None and state_batch_indices.dim() == 2:
+            fused_state_batch_indices = state_batch_indices[:, -1].contiguous()
+            if dst_state_batch_indices is not None:
+                fused_dst_state_batch_indices = dst_state_batch_indices[:, -1].contiguous()
         pad_slot_unused = pad_slot_id is None or pad_slot_id < 0
         if not pad_slot_unused:
             pad_slot_unused = not bool(
-                torch.any(state_batch_indices == pad_slot_id).item()
+                torch.any(fused_state_batch_indices == pad_slot_id).item()
             )
         if (
             (z is None or z.dim() == 3)
             and (dt_bias is None or dt_bias.dim() in (1, 2))
             and (
-                dst_state_batch_indices is None
-                or dst_state_batch_indices.shape == state_batch_indices.shape
+                fused_dst_state_batch_indices is None
+                or fused_dst_state_batch_indices.shape == fused_state_batch_indices.shape
             )
             and intermediate_states_buffer is None
             and pad_slot_unused
@@ -336,8 +342,8 @@ def selective_state_update(
             and C.dim() == 3
             and D is not None
             and D.dim() in (1, 2)
-            and state_batch_indices is not None
-            and state_batch_indices.dim() == 1
+            and fused_state_batch_indices is not None
+            and fused_state_batch_indices.dim() == 1
             and x.shape[1] % B.shape[1] == 0
         ):
             from .musa_ssu_triton import ssu_one_token_musa_triton
@@ -350,11 +356,11 @@ def selective_state_update(
                 B,
                 C,
                 D,
-                state_batch_indices,
+                fused_state_batch_indices,
                 dt_bias=dt_bias,
                 z=z,
                 dt_softplus=dt_softplus,
-                dst_state_batch_indices=dst_state_batch_indices,
+                dst_state_batch_indices=fused_dst_state_batch_indices,
                 out=out,
             )
         # The correctness provider has one recurrence implementation.  The
