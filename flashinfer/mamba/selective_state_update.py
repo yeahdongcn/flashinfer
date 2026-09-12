@@ -315,20 +315,22 @@ def selective_state_update(
             raise ValueError(f"unknown MUSA SSU algorithm={algorithm!r}")
         fused_state_batch_indices = state_batch_indices
         fused_dst_state_batch_indices = dst_state_batch_indices
-        if x.dim() == 3 and state_batch_indices is not None and state_batch_indices.dim() == 2:
+        fused_pad_slot_id = -1 if pad_slot_id is None else int(pad_slot_id)
+        state_indices_were_1d = (
+            state_batch_indices is not None and state_batch_indices.dim() == 1
+        )
+        dst_indices_were_1d = (
+            dst_state_batch_indices is None or dst_state_batch_indices.dim() == 1
+        )
+        if (
+            x.dim() == 3
+            and state_batch_indices is not None
+            and state_batch_indices.dim() == 2
+            and state_batch_indices.shape[1] == 1
+        ):
             fused_state_batch_indices = state_batch_indices[:, -1].contiguous()
-            if dst_state_batch_indices is not None:
+            if dst_state_batch_indices is not None and dst_state_batch_indices.shape[1] == 1:
                 fused_dst_state_batch_indices = dst_state_batch_indices[:, -1].contiguous()
-        pad_slot_unused = pad_slot_id is None or pad_slot_id < 0
-        if not pad_slot_unused and fused_state_batch_indices is not None:
-            pad_slot_unused = not bool(
-                torch.any(fused_state_batch_indices == pad_slot_id).item()
-            )
-        elif fused_state_batch_indices is None:
-            # Without an explicit index table the reference contract maps
-            # request ``b`` to state slot ``b``; there is no pad sentinel to
-            # inspect for the fused decode fast path.
-            pad_slot_unused = True
         if (
             (z is None or z.dim() == 3)
             and (dt_bias is None or dt_bias.dim() in (1, 2))
@@ -337,10 +339,19 @@ def selective_state_update(
                 or fused_dst_state_batch_indices.shape == fused_state_batch_indices.shape
             )
             and intermediate_states_buffer is None
-            and pad_slot_unused
             and rand_seed is None
+            and num_accepted_tokens is None
+            and not disable_state_update
+            and cu_seqlens is None
             and state.dtype in (torch.float16, torch.bfloat16, torch.float32)
             and x.dim() == 3
+            and state_indices_were_1d
+            and dst_indices_were_1d
+            and state_batch_indices.numel() == x.shape[0]
+            and (
+                dst_state_batch_indices is None
+                or dst_state_batch_indices.numel() == x.shape[0]
+            )
             and dt.dim() == 3
             and A.dim() == 3
             and B.dim() == 3
@@ -365,6 +376,7 @@ def selective_state_update(
                 dt_bias=dt_bias,
                 z=z,
                 dt_softplus=dt_softplus,
+                pad_slot_id=fused_pad_slot_id,
                 dst_state_batch_indices=fused_dst_state_batch_indices,
                 out=out,
             )
