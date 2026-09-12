@@ -1073,14 +1073,28 @@ def ssd_combined_fwd(
                 raise ValueError("update_seq_chunk_cumsum requires seq_idx")
             if seq_chunk_cumsum is None:
                 raise ValueError("update_seq_chunk_cumsum requires an output tensor")
-            from .musa_seq_chunk import seq_chunk_cumsum as musa_seq_chunk_cumsum
-
             flat_seq_idx = seq_idx.reshape(1, -1).contiguous()
             num_seqs = seq_chunk_cumsum.numel() - 1
-            musa_seq_chunk_cumsum(
-                flat_seq_idx, chunk_indices, chunk_offsets, 128,
-                num_seqs, out=seq_chunk_cumsum,
-            )
+            if chunk_offsets.numel() and int(chunk_offsets.max().item()) < flat_seq_idx.shape[1]:
+                # Module-level vLLM callers provide flat token offsets.  The
+                # lower-bound Triton kernel uses physical [chunk, token]
+                # coordinates, so map this compact metadata directly here.
+                counts = torch.zeros(num_seqs, device=x.device, dtype=torch.int32)
+                for chunk in range(chunk_offsets.numel()):
+                    position = int(chunk_offsets[chunk].item())
+                    sequence = int(flat_seq_idx[0, position].item())
+                    if sequence < 0 or sequence >= num_seqs:
+                        raise ValueError("chunk metadata sequence id is out of bounds")
+                    counts[sequence] += 1
+                seq_chunk_cumsum[0] = 0
+                seq_chunk_cumsum[1:] = torch.cumsum(counts, dim=0)
+            else:
+                from .musa_seq_chunk import seq_chunk_cumsum as musa_seq_chunk_cumsum
+
+                musa_seq_chunk_cumsum(
+                    flat_seq_idx, chunk_indices, chunk_offsets, 128,
+                    num_seqs, out=seq_chunk_cumsum,
+                )
         if chunk_indices is not None or chunk_offsets is not None:
             if seq_idx is None:
                 raise ValueError("chunk metadata requires seq_idx on MUSA SSD")

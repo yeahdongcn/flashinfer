@@ -304,7 +304,7 @@ def test_ssd_matches_independent_eager_recurrence_on_musa():
     state = torch.zeros(batch, H, D, N, device=DEVICE, dtype=torch.float32)
     expected = torch.empty(batch, seqlen, H, D, device=DEVICE, dtype=torch.float32)
     for token in range(seqlen):
-        delta = dt[:, token]
+        delta = dt[:, token].clamp_min(0)
         state = state * torch.exp(A[None, :, None, None] * delta[:, :, None, None])
         for head in range(H):
             state[:, head] += (
