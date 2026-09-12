@@ -343,11 +343,22 @@ def selective_state_update(
         ):
             fused_dst_state_batch_indices = dst_state_batch_indices[:, -1].contiguous()
         if (
-            (z is None or z.dim() == 3)
-            and (dt_bias is None or dt_bias.dim() in (1, 2))
+            (z is None or (z.dim() == 3 and z.shape == x.shape))
             and (
-                fused_dst_state_batch_indices is None
+                dt_bias is None
+                or (
+                    dt_bias.dim() == 1 and dt_bias.shape[0] == x.shape[1]
+                )
+                or (
+                    dt_bias.dim() == 2 and dt_bias.shape == x.shape[1:3]
+                )
+            )
+            and (
+                fused_state_batch_indices is not None
+                and (
+                    fused_dst_state_batch_indices is None
                 or fused_dst_state_batch_indices.shape == fused_state_batch_indices.shape
+                )
             )
             and intermediate_states_buffer is None
             and rand_seed is None
@@ -355,7 +366,9 @@ def selective_state_update(
             and not disable_state_update
             and cu_seqlens is None
             and state.dtype in (torch.float16, torch.bfloat16, torch.float32)
+            and state.dim() == 4
             and x.dim() == 3
+            and state.shape[1:3] == x.shape[1:3]
             and state_indices_are_one_token
             and dst_indices_are_one_token
             and state_batch_indices.numel() == x.shape[0]
@@ -367,8 +380,16 @@ def selective_state_update(
             and A.dim() == 3
             and B.dim() == 3
             and C.dim() == 3
+            and dt.shape == x.shape
+            and A.shape[:2] == x.shape[1:3]
+            and B.shape == C.shape
+            and B.shape[0] == x.shape[0]
+            and B.shape[2] == A.shape[2]
             and D is not None
-            and D.dim() in (1, 2)
+            and (
+                (D.dim() == 1 and D.shape[0] == x.shape[1])
+                or (D.dim() == 2 and D.shape == x.shape[1:3])
+            )
             and fused_state_batch_indices is not None
             and fused_state_batch_indices.dim() == 1
             and x.shape[1] % B.shape[1] == 0
