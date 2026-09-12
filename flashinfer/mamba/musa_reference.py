@@ -15,13 +15,13 @@ import torch
 
 
 def _philox_uniform(
-    value: torch.Tensor, rand_seed: torch.Tensor, offset: int = 0
+    value: torch.Tensor, rand_seed: torch.Tensor, offset: int = 0, rounds: int = 10
 ) -> torch.Tensor:
-    """Generate the Philox-4x32-10 stream used by MUSA reference casts.
+    """Generate the requested Philox-4x32 counter stream for reference casts.
 
     The implementation is intentionally expressed with tensor operations so
-    it follows the selected device.  ``offset`` is measured in 32-bit output
-    words, matching the layout-derived offsets used by the state writers.
+    it follows the selected device.  ``offset`` indexes Philox counters; the reference returns the first
+    word of each counter, rather than the grouped native SSU stream.
     """
     mask = 0xFFFFFFFF
     flat = torch.arange(value.numel(), device=value.device, dtype=torch.int64) + offset
@@ -34,7 +34,7 @@ def _philox_uniform(
     k1 = (seed >> 32) & mask
     m0, m1 = 0xD2511F53, 0xCD9E8D57
     w0, w1 = 0x9E3779B9, 0xBB67AE85
-    for _ in range(10):
+    for _ in range(rounds):
         p0 = c0 * m0
         p1 = c2 * m1
         hi0, lo0 = (p0 >> 32) & mask, p0 & mask
@@ -69,7 +69,7 @@ def _stochastic_cast(
     step = torch.pow(2.0, exponent - mantissa_bits)
     lower = torch.floor(value / step) * step
     probability = ((value - lower) / step).clamp(0, 1)
-    random = _philox_uniform(value, rand_seed, rng_offset + philox_rounds)
+    random = _philox_uniform(value, rand_seed, rng_offset, philox_rounds)
     return torch.where(random < probability, lower + step, lower).to(target_dtype)
 
 
@@ -82,7 +82,7 @@ def _stochastic_round_integer(
     if rand_seed is None or philox_rounds <= 0:
         return value.round()
     lower = torch.floor(value)
-    random = _philox_uniform(value, rand_seed, rng_offset + philox_rounds)
+    random = _philox_uniform(value, rand_seed, rng_offset, philox_rounds)
     return lower + (random < (value - lower)).to(value.dtype)
 
 
@@ -175,32 +175,7 @@ def selective_state_update_musa_reference(
     slots, nheads, dim, dstate = state.shape
 
     def _counter_uniform(value: torch.Tensor, offset: int = 0) -> torch.Tensor:
-        """Philox-4x32-10 counter stream with a layout-derived offset."""
-        mask = 0xFFFFFFFF
-        flat = torch.arange(value.numel(), device=value.device, dtype=torch.int64) + offset
-        c0 = flat & mask
-        c1 = (flat >> 32) & mask
-        c2 = torch.zeros_like(c0)
-        c3 = torch.zeros_like(c0)
-        seed = rand_seed.reshape(-1)[0].to(torch.int64)
-        k0 = seed & mask
-        k1 = (seed >> 32) & mask
-        m0, m1 = 0xD2511F53, 0xCD9E8D57
-        w0, w1 = 0x9E3779B9, 0xBB67AE85
-        for _ in range(10):
-            p0 = c0 * m0
-            p1 = c2 * m1
-            hi0, lo0 = (p0 >> 32) & mask, p0 & mask
-            hi1, lo1 = (p1 >> 32) & mask, p1 & mask
-            n0 = hi1 ^ c1 ^ k0
-            n1 = lo1
-            n2 = hi0 ^ c3 ^ k1
-            n3 = lo0
-            c0, c1, c2, c3 = n0 & mask, n1 & mask, n2 & mask, n3 & mask
-            k0 = (k0 + w0) & mask
-            k1 = (k1 + w1) & mask
-        uniform = (c0.to(torch.float32) + 0.5) / 4294967296.0
-        return uniform.reshape(value.shape)
+        return _philox_uniform(value, rand_seed, offset, philox_rounds)
 
     def cast_state(
         value: torch.Tensor,
@@ -223,14 +198,14 @@ def selective_state_update_musa_reference(
         step = torch.pow(2.0, exponent - mantissa_bits)
         lower = torch.floor(value / step) * step
         probability = ((value - lower) / step).clamp(0, 1)
-        random = _counter_uniform(value, rng_offset + philox_rounds)
+        random = _counter_uniform(value, rng_offset)
         rounded = torch.where(random < probability, lower + step, lower)
         return rounded.to(target_dtype)
 
     def round_integer(value: torch.Tensor, rng_offset: int = 0) -> torch.Tensor:
         if rand_seed is None or philox_rounds <= 0:
             return value.round()
-        random = _counter_uniform(value, rng_offset + philox_rounds)
+        random = _counter_uniform(value, rng_offset)
         lower = torch.floor(value)
         return lower + (random < (value - lower)).to(value.dtype)
 

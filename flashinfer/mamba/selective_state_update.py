@@ -311,22 +311,28 @@ def selective_state_update(
     # is deliberately a correctness scaffold; the native MUSA kernel will keep
     # this exact call boundary when it lands.
     if state.device.type == "musa":
-        if algorithm not in ("auto", "simple", "vertical", "horizontal", "async_horizontal"):
+        if algorithm not in (
+            "auto",
+            "simple",
+            "vertical",
+            "horizontal",
+            "async_horizontal",
+        ):
             raise ValueError(f"unknown MUSA SSU algorithm={algorithm!r}")
         fused_state_batch_indices = state_batch_indices
         fused_dst_state_batch_indices = dst_state_batch_indices
         fused_pad_slot_id = -1 if pad_slot_id is None else int(pad_slot_id)
-        state_indices_are_one_token = (
-            state_batch_indices is not None
-            and (
-                state_batch_indices.dim() == 1
-                or (state_batch_indices.dim() == 2 and state_batch_indices.shape[1] == 1)
-            )
+        state_indices_are_one_token = state_batch_indices is not None and (
+            state_batch_indices.dim() == 1
+            or (state_batch_indices.dim() == 2 and state_batch_indices.shape[1] == 1)
         )
         dst_indices_are_one_token = (
             dst_state_batch_indices is None
             or dst_state_batch_indices.dim() == 1
-            or (dst_state_batch_indices.dim() == 2 and dst_state_batch_indices.shape[1] == 1)
+            or (
+                dst_state_batch_indices.dim() == 2
+                and dst_state_batch_indices.shape[1] == 1
+            )
         )
         if (
             x.dim() == 3
@@ -346,22 +352,30 @@ def selective_state_update(
             (z is None or (z.dim() == 3 and z.shape == x.shape))
             and (
                 dt_bias is None
-                or (
-                    dt_bias.dim() == 1 and dt_bias.shape[0] == x.shape[1]
-                )
-                or (
-                    dt_bias.dim() == 2 and dt_bias.shape == x.shape[1:3]
-                )
+                or (dt_bias.dim() == 1 and dt_bias.shape[0] == x.shape[1])
+                or (dt_bias.dim() == 2 and dt_bias.shape == x.shape[1:3])
             )
             and (
                 fused_state_batch_indices is not None
                 and (
                     fused_dst_state_batch_indices is None
-                or fused_dst_state_batch_indices.shape == fused_state_batch_indices.shape
+                    or fused_dst_state_batch_indices.shape
+                    == fused_state_batch_indices.shape
                 )
             )
             and intermediate_states_buffer is None
-            and rand_seed is None
+            and (
+                rand_seed is None
+                or (
+                    state.dtype == torch.float16
+                    and state.shape[-1] in (64, 128, 256)
+                    and rand_seed.dtype == torch.int64
+                    and rand_seed.numel() == 1
+                    and rand_seed.device == state.device
+                    and philox_rounds in (5, 10)
+                    and algorithm in ("auto", "simple")
+                )
+            )
             and num_accepted_tokens is None
             and not disable_state_update
             and cu_seqlens is None
@@ -411,6 +425,8 @@ def selective_state_update(
                 pad_slot_id=fused_pad_slot_id,
                 dst_state_batch_indices=fused_dst_state_batch_indices,
                 out=out,
+                rand_seed=rand_seed,
+                philox_rounds=philox_rounds,
             )
         # The correctness provider has one recurrence implementation.  The
         # algorithm value remains accepted so callers can use the upstream
