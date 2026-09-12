@@ -316,49 +316,53 @@ def selective_state_update_musa_reference(
     ) -> torch.Tensor:
         running = read_state(state_slot) if running_override is None else running_override
 
-        for h in range(nheads):
-            g = h // group_ratio
-            if is_varlen:
-                x_t = x[token_idx, h].to(torch.float32)
-                dt_t = dt[token_idx, h].to(torch.float32)
-                b_t = B[token_idx, g].to(torch.float32)
-                c_t = C[token_idx, g].to(torch.float32)
-                z_t = z[token_idx, h].to(torch.float32) if z is not None else None
-            elif is_mtp:
-                x_t = x[batch_idx, token_idx, h].to(torch.float32)
-                dt_t = dt[batch_idx, token_idx, h].to(torch.float32)
-                b_t = B[batch_idx, token_idx, g].to(torch.float32)
-                c_t = C[batch_idx, token_idx, g].to(torch.float32)
-                z_t = z[batch_idx, token_idx, h].to(torch.float32) if z is not None else None
-            else:
-                x_t = x[batch_idx, h].to(torch.float32)
-                dt_t = dt[batch_idx, h].to(torch.float32)
-                b_t = B[batch_idx, g].to(torch.float32)
-                c_t = C[batch_idx, g].to(torch.float32)
-                z_t = z[batch_idx, h].to(torch.float32) if z is not None else None
+        if is_varlen:
+            x_t = x[token_idx].to(torch.float32)
+            dt_t = dt[token_idx].to(torch.float32)
+            b_t = B[token_idx].to(torch.float32)
+            c_t = C[token_idx].to(torch.float32)
+            z_t = z[token_idx].to(torch.float32) if z is not None else None
+        elif is_mtp:
+            x_t = x[batch_idx, token_idx].to(torch.float32)
+            dt_t = dt[batch_idx, token_idx].to(torch.float32)
+            b_t = B[batch_idx, token_idx].to(torch.float32)
+            c_t = C[batch_idx, token_idx].to(torch.float32)
+            z_t = z[batch_idx, token_idx].to(torch.float32) if z is not None else None
+        else:
+            x_t = x[batch_idx].to(torch.float32)
+            dt_t = dt[batch_idx].to(torch.float32)
+            b_t = B[batch_idx].to(torch.float32)
+            c_t = C[batch_idx].to(torch.float32)
+            z_t = z[batch_idx].to(torch.float32) if z is not None else None
 
-            if bias_h is not None:
-                dt_t = dt_t + bias_h[h]
-            if dt_softplus:
-                dt_t = _softplus(dt_t)
-            d_a = torch.exp(A_h[h] * dt_t[:, None])
-            running[h] = (
-                running[h]
-                * d_a
-                + (dt_t * x_t)[:, None] * b_t[None, :]
-            )
-            y_t = torch.sum(c_t[None, :] * running[h], dim=-1)
-            if D_h is not None:
-                y_t = y_t + D_h[h].to(torch.float32) * x_t
-            if z_t is not None:
-                y_t = y_t * z_t * torch.sigmoid(z_t)
+        b_h = b_t.repeat_interleave(group_ratio, dim=0)
+        c_h = c_t.repeat_interleave(group_ratio, dim=0)
+        if bias_h is not None:
+            dt_t = dt_t + bias_h
+        if dt_softplus:
+            dt_t = _softplus(dt_t)
+        if dt_t.dim() == 1:
+            dt_state = dt_t[:, None, None]
+            dt_x = dt_t[:, None]
+        else:
+            dt_state = dt_t[:, :, None]
+            dt_x = dt_t
+        running.copy_(
+            running * torch.exp(A_h * dt_state)
+            + (dt_x * x_t)[:, :, None] * b_h[:, None, :]
+        )
+        y_t = torch.sum(c_h[:, None, :] * running, dim=-1)
+        if D_h is not None:
+            y_t = y_t + D_h.to(torch.float32) * x_t
+        if z_t is not None:
+            y_t = y_t * z_t * torch.sigmoid(z_t)
 
-            if is_varlen:
-                out[token_idx, h].copy_(y_t.to(out.dtype))
-            elif is_mtp:
-                out[batch_idx, token_idx, h].copy_(y_t.to(out.dtype))
-            else:
-                out[batch_idx, h].copy_(y_t.to(out.dtype))
+        if is_varlen:
+            out[token_idx].copy_(y_t.to(out.dtype))
+        elif is_mtp:
+            out[batch_idx, token_idx].copy_(y_t.to(out.dtype))
+        else:
+            out[batch_idx].copy_(y_t.to(out.dtype))
         return running
 
     is_spec_decoding = num_accepted_tokens is not None
