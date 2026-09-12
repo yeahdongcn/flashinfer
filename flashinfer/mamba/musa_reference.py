@@ -470,6 +470,8 @@ def ssd_combined_fwd_musa_reference(
         raise NotImplementedError("unsupported MUSA SSD state dtype")
     if initial_states is None:
         num_sequences = batch
+        if seq_idx is not None:
+            num_sequences = max(num_sequences, int(seq_idx.max().item()) + 1)
         state = torch.zeros(
             batch, nheads, headdim, dstate, dtype=torch.float32, device=x.device
         )
