@@ -1236,17 +1236,23 @@ def ssd_combined_fwd_varlen(
     The CUDA CuTe runner has a separate varlen contract.  MUSA uses this
     explicit entry point so vLLM can share its packed metadata without
     converting sequences back to a padded batch.
+
+    The native MUSA provider specializes the standard Mamba2 parameterization
+    (non-positive A and softplus/non-negative dt) with half-precision x/B/C.
+    Unsupported layouts and checkpoint materialization retain the reference
+    path. Set VLLM_MUSA_FLASHINFER_SSD=0 to select the reference provider.
     """
     if x.device.type != "musa":
         raise NotImplementedError(
             "ssd_combined_fwd_varlen is currently implemented for the MUSA provider"
         )
     if (
-        os.getenv("VLLM_MUSA_FLASHINFER_SSD", "0") == "1"
+        os.getenv("VLLM_MUSA_FLASHINFER_SSD", "1") == "1"
         and chunk_size > 0
         and chunk_size & (chunk_size - 1) == 0
         and x.ndim == 3
         and x.dtype in (torch.float16, torch.bfloat16)
+        and B.dtype == C.dtype == x.dtype
         and dt.ndim == 2
         and A.ndim == 1
         and dt_softplus

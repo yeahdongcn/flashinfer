@@ -16,7 +16,7 @@ TRITON_22 = version.parse(triton.__version__) >= version.parse("2.2.0")
 
 
 def is_musa_triton_32():
-    return False
+    return triton.__version__.split(".")[:2] == ["3", "2"]
 
 
 def _ssd_autotune_configs():
