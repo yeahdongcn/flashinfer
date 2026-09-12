@@ -346,6 +346,7 @@ def selective_state_update(
                 dt_bias=dt_bias,
                 z=z,
                 dt_softplus=dt_softplus,
+                out=out,
             )
         # The correctness provider has one recurrence implementation.  The
         # algorithm value remains accepted so callers can use the upstream

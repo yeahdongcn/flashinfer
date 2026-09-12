@@ -84,13 +84,17 @@ def ssu_one_token_musa_triton(
     dt_bias: torch.Tensor | None = None,
     z: torch.Tensor | None = None,
     dt_softplus: bool = False,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Run the fused MUSA decode kernel for the supported contract."""
     batch, heads, dim = x.shape
     groups = B.shape[1]
     dstate = A.shape[-1]
     block_n = triton.next_power_of_2(dstate)
-    out = torch.empty_like(x)
+    if out is None:
+        out = torch.empty_like(x)
+    elif out.shape != x.shape or out.dtype != x.dtype:
+        raise ValueError("MUSA fused SSU out must match x shape and dtype")
     _ssu_one_token_kernel[(batch * heads * dim,)](
         state,
         x,
