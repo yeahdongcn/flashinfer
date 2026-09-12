@@ -30,14 +30,14 @@ def _inputs(n, table=False, state_dtype=None):
     return state, x, dt, a, b, c, skip, src, dst
 
 
-def _expected(n, rounds, seed, src_slot=1):
+def _expected(n, rounds, seed, src_slot=1, slot_stride=None):
     values = [1.00048828125, -1.00048828125]
     group = min(4, n // 32)
     expected = []
     for h in range(2):
         bits = struct.unpack("<I", struct.pack("<f", values[h]))[0]
         for d in range(64):
-            base = src_slot * 2 * 64 * n + h * 64 * n + d * n
+            base = src_slot * (slot_stride or (2 * 64 * n)) + h * 64 * n + d * n
             for i in range(0, n, group):
                 words = philox4x32_words(seed, base + i, rounds)
                 expected.extend(cvt_rs_f16_bits(bits, words[j]) for j in range(group))
@@ -190,3 +190,41 @@ def test_reference_uses_requested_philox_rounds(rounds):
     words = [philox4x32_words(seed, offset + i, rounds)[0] for i in range(4)]
     expected = (torch.tensor(words, dtype=torch.float32) + 0.5) / 4294967296.0
     torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)
+
+
+def test_batched_layer_view_and_padding():
+    n = 128
+    _, x, dt, a, b, c, skip, _, _ = _inputs(n)
+    storage = torch.zeros(5, 3, 2, 64, n, device="musa", dtype=torch.float16)
+    state = storage[:, 1]
+    x = x.repeat(3, 1, 1)
+    dt = dt.expand(3, -1, -1)
+    b, c = b.expand(3, -1, -1), c.expand(3, -1, -1)
+    src = torch.tensor([[1], [2], [0]], device="musa", dtype=torch.int32)
+    dst = torch.tensor([[3], [4], [0]], device="musa", dtype=torch.int32)
+    seed = 42 + 2**40
+    key = torch.tensor([seed], device="musa", dtype=torch.int64)
+    selective_state_update(
+        state,
+        x,
+        dt,
+        a,
+        b,
+        c,
+        skip,
+        state_batch_indices=src,
+        dst_state_batch_indices=dst,
+        pad_slot_id=0,
+        rand_seed=key,
+        philox_rounds=5,
+        algorithm="simple",
+    )
+    for source, destination in [(1, 3), (2, 4)]:
+        actual = (
+            state[destination].view(torch.int16).cpu().to(torch.int32).flatten()
+            & 0xFFFF
+        )
+        assert torch.equal(actual, _expected(n, 5, seed, source, state.stride(0)))
+    assert bool((storage[:, 0] == 0).all().cpu())
+    assert bool((storage[:, 2] == 0).all().cpu())
+    assert bool((state[:3] == 0).all().cpu())
