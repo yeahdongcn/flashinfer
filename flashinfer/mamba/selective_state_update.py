@@ -316,7 +316,10 @@ def selective_state_update(
         if (
             (z is None or z.dim() == 3)
             and (dt_bias is None or dt_bias.dim() in (1, 2))
-            and dst_state_batch_indices is None
+            and (
+                dst_state_batch_indices is None
+                or dst_state_batch_indices is state_batch_indices
+            )
             and intermediate_states_buffer is None
             and (pad_slot_id is None or pad_slot_id < 0)
             and rand_seed is None
