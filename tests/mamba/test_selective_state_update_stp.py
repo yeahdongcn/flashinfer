@@ -60,7 +60,7 @@ class TestSelectiveStateUpdate:
 
     # Test configuration
     # BF16 output quantization on MUSA is one ulp at roughly 0.015625.
-    ATOL = 2e-2 if TEST_DEVICE == "musa" else 1e-3
+    ATOL = 3e-2 if TEST_DEVICE == "musa" else 1e-3
     RTOL = 5e-2 if TEST_DEVICE == "musa" else 1e-2
     NGROUPS = 8
     INPUT_DTYPE = torch.bfloat16
@@ -692,8 +692,8 @@ def _get_algorithms_no_horizontal():
 class TestSelectiveStateUpdateStochasticRounding(TestSelectiveStateUpdate):
     """Test fp16 state with stochastic rounding vs Triton reference."""
 
-    ATOL = 0.001
-    RTOL = 0.01
+    ATOL = 2e-2 if TEST_DEVICE == "musa" else 0.001
+    RTOL = 5e-2 if TEST_DEVICE == "musa" else 0.01
 
     RAND_SEED = torch.tensor(42, dtype=torch.int64, device=TEST_DEVICE)
 

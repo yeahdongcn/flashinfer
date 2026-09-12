@@ -938,7 +938,7 @@ class TestSelectiveStateUpdateMTPInt16(TestSelectiveStateUpdateMTP):
         )
 
         # Vertical/horizontal don't support scaled (quantized) state
-        if self._algo in ("vertical", "horizontal"):
+        if TEST_DEVICE != "musa" and self._algo in ("vertical", "horizontal"):
             with pytest.raises(RuntimeError, match="does not support scaled"):
                 self.run_kernel(inputs)
             return
@@ -1077,7 +1077,7 @@ class TestSelectiveStateUpdateMTPInt16IntermediateStates(
         )
 
         # Vertical/horizontal don't support scaled (quantized) state
-        if self._algo in ("vertical", "horizontal"):
+        if TEST_DEVICE != "musa" and self._algo in ("vertical", "horizontal"):
             with pytest.raises(RuntimeError, match="does not support scaled"):
                 self.run_kernel_with_intermediate_states(inputs)
             return
