@@ -23,7 +23,8 @@ def _ssu_one_token_kernel(
     d_ptr,
     dt_bias_ptr,
     z_ptr,
-    slot_ptr,
+    src_slot_ptr,
+    dst_slot_ptr,
     out_ptr,
     H: tl.constexpr,
     D: tl.constexpr,
@@ -43,10 +44,12 @@ def _ssu_one_token_kernel(
     head = rem // D
     dim = rem % D
     group = head * G // H
-    slot = tl.load(slot_ptr + batch).to(tl.int64)
+    src_slot = tl.load(src_slot_ptr + batch).to(tl.int64)
+    dst_slot = tl.load(dst_slot_ptr + batch).to(tl.int64)
     n = tl.arange(0, BLOCK_N)
     mask = n < N
-    state_offset = ((slot * H + head) * D + dim) * N
+    state_offset = ((src_slot * H + head) * D + dim) * N
+    dst_state_offset = ((dst_slot * H + head) * D + dim) * N
     a_offset = (head * D + dim) * N
     bc_offset = (batch * G + group) * N
     s = tl.load(state_ptr + state_offset + n, mask=mask, other=0.0).to(tl.float32)
@@ -61,7 +64,7 @@ def _ssu_one_token_kernel(
     if SOFTPLUS:
         dt = tl.log(1.0 + tl.exp(dt))
     updated = s * tl.exp(a * dt) + (dt * x) * b
-    tl.store(state_ptr + state_offset + n, updated, mask=mask)
+    tl.store(state_ptr + dst_state_offset + n, updated, mask=mask)
     y = tl.sum(c * updated, axis=0)
     d_offset = head * D + dim if not D_IS_VECTOR else head
     d = tl.load(d_ptr + d_offset).to(tl.float32)
@@ -81,6 +84,7 @@ def ssu_one_token_musa_triton(
     C: torch.Tensor,
     D: torch.Tensor,
     state_batch_indices: torch.Tensor,
+    dst_state_batch_indices: torch.Tensor | None = None,
     dt_bias: torch.Tensor | None = None,
     z: torch.Tensor | None = None,
     dt_softplus: bool = False,
@@ -91,6 +95,10 @@ def ssu_one_token_musa_triton(
     groups = B.shape[1]
     dstate = A.shape[-1]
     block_n = triton.next_power_of_2(dstate)
+    if dst_state_batch_indices is None:
+        dst_state_batch_indices = state_batch_indices
+    if dst_state_batch_indices.shape != state_batch_indices.shape:
+        raise ValueError("MUSA fused SSU source/destination slot shapes differ")
     if out is None:
         out = torch.empty_like(x)
     elif out.shape != x.shape or out.dtype != x.dtype:
@@ -106,6 +114,7 @@ def ssu_one_token_musa_triton(
         dt_bias if dt_bias is not None else x,
         z if z is not None else x,
         state_batch_indices,
+        dst_state_batch_indices,
         out,
         H=heads,
         D=dim,

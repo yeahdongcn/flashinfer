@@ -323,7 +323,7 @@ def selective_state_update(
             and (dt_bias is None or dt_bias.dim() in (1, 2))
             and (
                 dst_state_batch_indices is None
-                or dst_state_batch_indices is state_batch_indices
+                or dst_state_batch_indices.shape == state_batch_indices.shape
             )
             and intermediate_states_buffer is None
             and pad_slot_unused
@@ -354,6 +354,7 @@ def selective_state_update(
                 dt_bias=dt_bias,
                 z=z,
                 dt_softplus=dt_softplus,
+                dst_state_batch_indices=dst_state_batch_indices,
                 out=out,
             )
         # The correctness provider has one recurrence implementation.  The
