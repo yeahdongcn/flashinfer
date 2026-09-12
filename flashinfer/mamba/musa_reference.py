@@ -143,14 +143,18 @@ def selective_state_update_musa_reference(
     state/index/replay contract.  Native MUSA kernels will replace this slow
     reference implementation behind the same boundary.
     """
-    if state.dtype not in (torch.int16, torch.float16, torch.bfloat16, torch.float32):
-        raise NotImplementedError("MUSA SSU supports int16/fp16/bf16/fp32 state")
+    quantized_state = state.dtype in (torch.int8, torch.int16, torch.float8_e4m3fn)
+    if state.dtype not in (
+        torch.int8, torch.int16, torch.float8_e4m3fn,
+        torch.float16, torch.bfloat16, torch.float32,
+    ):
+        raise NotImplementedError("unsupported MUSA SSU state dtype")
     if D is not None and D.dtype != dt.dtype:
         raise ValueError("D must have the same dtype as dt")
-    if state.dtype == torch.int16 and state_scale is None:
-        raise ValueError("int16 state requires state_scale")
-    if state.dtype != torch.int16 and state_scale is not None:
-        raise ValueError("state_scale is only valid for int16 state")
+    if quantized_state and state_scale is None:
+        raise ValueError("quantized MUSA SSU state requires state_scale")
+    if not quantized_state and state_scale is not None:
+        raise ValueError("state_scale is only valid for quantized state")
     if state_scale is not None and state_scale.dim() == 4 and state_scale.shape[-1] == 1:
         state_scale = state_scale.squeeze(-1)
     if (
@@ -236,7 +240,7 @@ def selective_state_update_musa_reference(
         if state_slot < 0 or state_slot >= slots:
             raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
         value = state[state_slot].to(torch.float32).clone()
-        if state.dtype == torch.int16:
+        if quantized_state:
             value = value * state_scale[state_slot].to(torch.float32)[..., None]
         return value
 
@@ -245,13 +249,18 @@ def selective_state_update_musa_reference(
             return
         if state_slot < 0 or state_slot >= slots:
             raise IndexError(f"state slot {state_slot} is outside [0, {slots})")
-        if state.dtype == torch.int16:
+        if quantized_state:
             amax = value.abs().amax(dim=-1)
-            scale = torch.where(amax == 0, torch.ones_like(amax), amax / 32767)
-            state[state_slot].copy_(
-                round_integer(value / scale[..., None], state_slot * value.numel())
-                .clamp(-32768, 32767).to(torch.int16)
-            )
+            qmax = 127 if state.dtype == torch.int8 else 32767 if state.dtype == torch.int16 else 448
+            scale = torch.where(amax == 0, torch.ones_like(amax), amax / qmax)
+            quantized = value / scale[..., None]
+            if state.dtype == torch.float8_e4m3fn:
+                state[state_slot].copy_(quantized.to(state.dtype))
+            else:
+                state[state_slot].copy_(
+                    round_integer(value / scale[..., None], state_slot * value.numel())
+                    .clamp(-qmax - 1, qmax).to(state.dtype)
+                )
             state_scale[state_slot].copy_(scale.to(state_scale.dtype))
         else:
             state[state_slot].copy_(cast_state(value, rng_offset=state_slot * value.numel()))
@@ -454,8 +463,11 @@ def ssd_combined_fwd_musa_reference(
         raise ValueError("z must have the same shape as x")
 
     state_dtype = initial_states.dtype if initial_states is not None else torch.bfloat16
-    if state_dtype not in (torch.float16, torch.bfloat16, torch.float32):
-        raise NotImplementedError("MUSA SSD bring-up supports fp16/bf16/fp32 state only")
+    if state_dtype not in (
+        torch.int8, torch.int16, torch.float8_e4m3fn,
+        torch.float16, torch.bfloat16, torch.float32,
+    ):
+        raise NotImplementedError("unsupported MUSA SSD state dtype")
     if initial_states is None:
         num_sequences = batch
         state = torch.zeros(
@@ -504,6 +516,11 @@ def ssd_combined_fwd_musa_reference(
     # the externally visible output and final state use the requested dtypes.
     final = torch.empty(
         num_sequences, nheads, headdim, dstate, dtype=state_dtype, device=x.device
+    )
+    state_scales = (
+        torch.empty(num_sequences, nheads, headdim, device=x.device, dtype=torch.float32)
+        if state_dtype in (torch.int8, torch.int16, torch.float8_e4m3fn)
+        else None
     )
     seen = torch.zeros(num_sequences, dtype=torch.bool, device=x.device)
     previous_seq = None
@@ -566,10 +583,23 @@ def ssd_combined_fwd_musa_reference(
                         checkpoint_states[slot].copy_(state[sequence].to(checkpoint_states.dtype))
 
         if seq_idx is None:
-            final.copy_(state.to(state_dtype))
+                if state_scales is None:
+                    final.copy_(state.to(state_dtype))
+                else:
+                    qmax = 127 if state_dtype == torch.int8 else 32767 if state_dtype == torch.int16 else 448
+                    scale = torch.where(state.abs().amax(dim=-1) == 0, torch.ones_like(state.abs().amax(dim=-1)), state.abs().amax(dim=-1) / qmax)
+                    final.copy_((state / scale[..., None]).to(state_dtype))
+                    state_scales.copy_(scale)
         else:
             for sequence in torch.unique(ids).tolist():
-                final[sequence].copy_(state[ids == sequence][0].to(state_dtype))
+                selected = state[ids == sequence][0]
+                if state_scales is None:
+                    final[sequence].copy_(selected.to(state_dtype))
+                else:
+                    qmax = 127 if state_dtype == torch.int8 else 32767 if state_dtype == torch.int16 else 448
+                    scale = torch.where(selected.abs().amax(dim=-1) == 0, torch.ones_like(selected.abs().amax(dim=-1)), selected.abs().amax(dim=-1) / qmax)
+                    final[sequence].copy_((selected / scale[..., None]).to(state_dtype))
+                    state_scales[sequence].copy_(scale)
                 seen[sequence] = True
 
     if seq_idx is not None and not bool(seen.all()):

@@ -898,6 +898,23 @@ def checkpointing_ssu(
     out : torch.Tensor
         Output tensor, shape (batch, T, nheads, dim).
     """
+    if algorithm not in ("auto", "monolith", "two-kernel"):
+        raise ValueError(
+            "algorithm must be one of 'auto', 'monolith', 'two-kernel'; "
+            f"got {algorithm!r}"
+        )
+    scratch_provided = cb_scaled is not None
+    if scratch_provided != (cumAdt_vec is not None) or scratch_provided != (
+        cb_old is not None
+    ):
+        raise ValueError(
+            "cb_scaled, cumAdt_vec, and cb_old must be provided together"
+        )
+    if algorithm == "two-kernel" and not scratch_provided:
+        raise ValueError(
+            "algorithm='two-kernel' requires cb_scaled/cumAdt_vec/cb_old"
+        )
+
     if state.device.type == "musa":
         from .musa_reference import checkpointing_ssu_musa_reference
 
