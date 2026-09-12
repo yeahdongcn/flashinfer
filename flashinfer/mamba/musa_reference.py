@@ -718,6 +718,12 @@ def ssd_combined_fwd_varlen_musa_reference(
         raise ValueError("dt_bias must have shape [heads] or [heads, headdim]")
     ratio = nheads // ngroups
     A_f = A.to(torch.float32)
+    if A_f.dim() == 1:
+        A_state = A_f[:, None, None]
+    elif A_f.shape == (nheads, headdim, dstate):
+        A_state = A_f
+    else:
+        raise ValueError("A must have shape [heads] or [heads, headdim, dstate]")
     states = torch.empty(
         nchunks, nheads, headdim, dstate, dtype=state_dtype, device=x.device
     )
@@ -759,7 +765,7 @@ def ssd_combined_fwd_varlen_musa_reference(
                 delta_state = delta[:, :, None]
                 delta_x = delta
             running.copy_(
-                running * torch.exp(A_f[:, None, :] * delta_state)
+                running * torch.exp(A_state * delta_state)
                 + (delta_x * x_t)[:, :, None] * b_h[:, None, :]
             )
             y = torch.sum(c_h[:, None, :] * running, dim=-1)
