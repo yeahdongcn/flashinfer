@@ -313,6 +313,11 @@ def selective_state_update(
     if state.device.type == "musa":
         if algorithm not in ("auto", "simple", "vertical", "horizontal", "async_horizontal"):
             raise ValueError(f"unknown MUSA SSU algorithm={algorithm!r}")
+        pad_slot_unused = pad_slot_id is None or pad_slot_id < 0
+        if not pad_slot_unused:
+            pad_slot_unused = not bool(
+                torch.any(state_batch_indices == pad_slot_id).item()
+            )
         if (
             (z is None or z.dim() == 3)
             and (dt_bias is None or dt_bias.dim() in (1, 2))
@@ -321,7 +326,7 @@ def selective_state_update(
                 or dst_state_batch_indices is state_batch_indices
             )
             and intermediate_states_buffer is None
-            and (pad_slot_id is None or pad_slot_id < 0)
+            and pad_slot_unused
             and rand_seed is None
             and state.dtype in (torch.float16, torch.bfloat16, torch.float32)
             and x.dim() == 3
