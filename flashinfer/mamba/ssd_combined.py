@@ -22,6 +22,7 @@ This module provides the combined forward pass for Mamba2 SSD, combining:
 """
 
 import functools
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -1240,6 +1241,36 @@ def ssd_combined_fwd_varlen(
         raise NotImplementedError(
             "ssd_combined_fwd_varlen is currently implemented for the MUSA provider"
         )
+    if (
+        os.getenv("VLLM_MUSA_FLASHINFER_SSD", "0") == "1"
+        and checkpoint_token_indices is None
+        and checkpoint_state_slots is None
+        and checkpoint_states is None
+    ):
+        from .musa_ssd_triton import mamba_chunk_scan_combined_varlen
+
+        return mamba_chunk_scan_combined_varlen(
+            x,
+            dt,
+            A,
+            B,
+            C,
+            chunk_size,
+            cu_seqlens,
+            cu_chunk_seqlens,
+            last_chunk_indices,
+            seq_idx,
+            out,
+            D=D,
+            z=z,
+            dt_bias=dt_bias,
+            initial_states=initial_states,
+            dt_softplus=dt_softplus,
+            dt_limit=dt_limit,
+            return_intermediate_states=return_intermediate_states,
+            state_dtype=state_dtype,
+        )
+
     from .musa_reference import ssd_combined_fwd_varlen_musa_reference
 
     return ssd_combined_fwd_varlen_musa_reference(
