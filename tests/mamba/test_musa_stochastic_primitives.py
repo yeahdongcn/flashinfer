@@ -11,7 +11,7 @@ if os.environ.get("FLASHINFER_MAMBA_TEST_DEVICE") != "musa":
     pytest.skip("requires MUSA", allow_module_level=True)
 
 from flashinfer.mamba.musa_stochastic import philox4x32, cvt_rs_f16
-from test_philox_cpu_oracle import philox4x32_words, cvt_rs_f16_bits
+from .test_philox_cpu_oracle import philox4x32_words, cvt_rs_f16_bits
 
 
 @triton.jit

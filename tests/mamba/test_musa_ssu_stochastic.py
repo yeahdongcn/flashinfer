@@ -11,7 +11,7 @@ if os.environ.get("FLASHINFER_MAMBA_TEST_DEVICE") != "musa":
 
 from flashinfer.mamba.selective_state_update import selective_state_update
 import flashinfer.mamba.musa_reference as reference
-from test_philox_cpu_oracle import philox4x32_words, cvt_rs_f16_bits
+from .test_philox_cpu_oracle import philox4x32_words, cvt_rs_f16_bits
 
 
 def _inputs(n, table=False, state_dtype=None):

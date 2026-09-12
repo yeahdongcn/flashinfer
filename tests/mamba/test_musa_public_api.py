@@ -1,5 +1,6 @@
 """Public Mamba API tests executed on a MUSA device."""
 
+import math
 import os
 
 import pytest
@@ -271,12 +272,14 @@ def test_cake_ssd_packed_varlen_metadata_on_musa():
 
 def test_ssd_checkpoint_token_and_slot_on_musa():
     batch, seqlen = 1, 4
-    x = torch.randn(batch, seqlen, H, D, device=DEVICE, dtype=torch.bfloat16)
-    dt = torch.randn(batch, seqlen, H, device=DEVICE, dtype=torch.float32)
-    A = -torch.rand(H, device=DEVICE, dtype=torch.float32) - 1
-    B = torch.randn(batch, seqlen, G, N, device=DEVICE, dtype=torch.bfloat16)
-    C = torch.randn_like(B)
-    checkpoint = torch.zeros(1, H, D, N, device=DEVICE, dtype=torch.float16)
+    x = torch.ones(batch, seqlen, H, D, device=DEVICE, dtype=torch.bfloat16)
+    dt = torch.full((batch, seqlen, H), 0.25, device=DEVICE, dtype=torch.float32)
+    A = -torch.ones(H, device=DEVICE, dtype=torch.float32)
+    B = torch.ones(batch, seqlen, G, N, device=DEVICE, dtype=torch.bfloat16)
+    C = torch.ones_like(B)
+    checkpoint = torch.full(
+        (1, H, D, N), float("nan"), device=DEVICE, dtype=torch.float16
+    )
     out, final = ssd_combined_fwd(
         x,
         dt,
@@ -289,8 +292,10 @@ def test_ssd_checkpoint_token_and_slot_on_musa():
     )
     assert out.shape == x.shape
     assert final.shape == (batch, H, D, N)
-    assert torch.isfinite(checkpoint).all()
-    assert torch.any(checkpoint != 0)
+    # After two tokens, s_2 = 0.25 * exp(-0.25) + 0.25. Random negative
+    # dt values can legitimately clamp to zero and leave a zero checkpoint.
+    expected = torch.full_like(checkpoint, 0.25 * (1 + math.exp(-0.25)))
+    torch.testing.assert_close(checkpoint, expected, rtol=0, atol=0)
 
 
 def test_ssd_matches_independent_eager_recurrence_on_musa():
