@@ -713,7 +713,9 @@ def ssd_combined_fwd_varlen_musa_reference(
             raise ValueError("D must have shape [heads] or [heads, headdim]")
     else:
         D_f = None
-    bias = None if dt_bias is None else dt_bias.to(torch.float32).reshape(1, nheads)
+    bias = None if dt_bias is None else dt_bias.to(torch.float32)
+    if bias is not None and bias.shape not in ((nheads,), (nheads, headdim)):
+        raise ValueError("dt_bias must have shape [heads] or [heads, headdim]")
     ratio = nheads // ngroups
     A_f = A.to(torch.float32)
     states = torch.empty(
@@ -743,28 +745,30 @@ def ssd_combined_fwd_varlen_musa_reference(
         for token in range(start, end):
             delta = dt[token].to(torch.float32)
             if bias is not None:
-                delta = delta + bias[0]
+                delta = delta + bias
             if dt_softplus:
                 delta = _softplus(delta)
             delta = delta.clamp(dt_limit[0], dt_limit[1])
-            for head in range(nheads):
-                group = head // ratio
-                running[head] = running[head] * torch.exp(A_f[head] * delta[head])
-                running[head] += (
-                    (delta[head] * x[token, head].to(torch.float32))[:, None]
-                    * B[token, group].to(torch.float32)[None, :]
-                )
-                y = torch.sum(
-                    C[token, group].to(torch.float32)[None, :]
-                    * running[head],
-                    dim=-1,
-                )
-                if D_f is not None:
-                    y = y + D_f[head] * x[token, head].to(torch.float32)
-                if z is not None:
-                    z_t = z[token, head].to(torch.float32)
-                    y = y * z_t * torch.sigmoid(z_t)
-                out[token, head].copy_(y.to(out.dtype))
+            x_t = x[token].to(torch.float32)
+            b_h = B[token].to(torch.float32).repeat_interleave(ratio, dim=0)
+            c_h = C[token].to(torch.float32).repeat_interleave(ratio, dim=0)
+            if delta.dim() == 1:
+                delta_state = delta[:, None, None]
+                delta_x = delta[:, None]
+            else:
+                delta_state = delta[:, :, None]
+                delta_x = delta
+            running.copy_(
+                running * torch.exp(A_f[:, None, :] * delta_state)
+                + (delta_x * x_t)[:, :, None] * b_h[:, None, :]
+            )
+            y = torch.sum(c_h[:, None, :] * running, dim=-1)
+            if D_f is not None:
+                y = y + D_f * x_t
+            if z is not None:
+                z_t = z[token].to(torch.float32)
+                y = y * z_t * torch.sigmoid(z_t)
+            out[token].copy_(y.to(out.dtype))
             sequence_token_counts[sequence] = sequence_token_counts.get(sequence, 0) + 1
             if checkpoint_states is not None and sequence < checkpoint_token_indices.numel():
                 if sequence_token_counts[sequence] == int(checkpoint_token_indices[sequence].item()):
