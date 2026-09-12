@@ -45,6 +45,18 @@ def _mamba_chunk_scan_combined_fwd(
     dt_limit=(0.0, float("inf")),
     state_dtype=None,
 ):
+    # Match the public cache contract and keep initial/current state pointer
+    # element types identical in the Triton scan branch.
+    if state_dtype is None and initial_states is not None:
+        state_dtype = initial_states.dtype
+    # The kernels index these compact metadata/parameter vectors linearly.
+    cu_seqlens = cu_seqlens.contiguous()
+    cu_chunk_seqlens = cu_chunk_seqlens.contiguous()
+    last_chunk_indices = last_chunk_indices.contiguous()
+    seq_idx = seq_idx.contiguous()
+    A = A.contiguous()
+    if dt_bias is not None:
+        dt_bias = dt_bias.contiguous()
     assert is_int_pow_2(chunk_size), "chunk_size must be integer power of 2"
     seqlen, nheads, headdim = x.shape
     _, ngroups, dstate = B.shape

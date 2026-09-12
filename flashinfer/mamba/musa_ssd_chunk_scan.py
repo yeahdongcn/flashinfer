@@ -33,7 +33,6 @@ def _ssd_autotune_configs():
             )
         ]
     return [
-
         # =================================================================
         # Higher warp count configs for better latency hiding
         # More warps = more instructions in flight = better memory latency hiding
@@ -159,8 +158,54 @@ def _ssd_autotune_configs():
             num_stages=4,
             num_warps=2,
         ),
-
     ]
+
+
+@triton.jit
+def _load_previous_state(
+    states_ptr,
+    initstates_ptr,
+    pid_c,
+    pid_h,
+    seq_idx,
+    new_sequence,
+    offs_n,
+    offs_k,
+    hdim,
+    dstate,
+    stride_states_chunk,
+    stride_states_head,
+    stride_states_hdim,
+    stride_states_dstate,
+    stride_init_states_batch,
+    stride_init_states_head,
+    stride_init_states_hdim,
+    stride_init_states_dstate,
+    HAS_INITSTATES: tl.constexpr,
+):
+    mask = (offs_k[:, None] < dstate) & (offs_n[None, :] < hdim)
+    if new_sequence:
+        if HAS_INITSTATES:
+            initial_ptrs = (
+                initstates_ptr
+                + seq_idx * stride_init_states_batch
+                + pid_h * stride_init_states_head
+                + offs_n[None, :] * stride_init_states_hdim
+                + offs_k[:, None] * stride_init_states_dstate
+            )
+            value = tl.load(initial_ptrs, mask=mask, other=0.0).to(tl.float32)
+        else:
+            value = tl.full((offs_k.shape[0], offs_n.shape[0]), 0.0, tl.float32)
+    else:
+        chunk_ptrs = (
+            states_ptr
+            + (pid_c - 1) * stride_states_chunk
+            + pid_h * stride_states_head
+            + offs_n[None, :] * stride_states_hdim
+            + offs_k[:, None] * stride_states_dstate
+        )
+        value = tl.load(chunk_ptrs, mask=mask, other=0.0).to(tl.float32)
+    return value
 
 
 @triton.autotune(
@@ -259,21 +304,6 @@ def _chunk_scan_fwd_kernel(
         seq_idx_ptr - stride_seq_idx_chunk, mask=pid_c >= 1, other=-1
     )
 
-    if HAS_INITSTATES and (seq_idx != seq_idx_prev):
-        prev_states_ptr = (
-            initstates_ptr
-            + seq_idx * stride_init_states_batch
-            + pid_h * stride_init_states_head
-        )
-        prev_states_hdim = stride_init_states_hdim
-        prev_states_dstate = stride_init_states_dstate
-    else:
-        prev_states_ptr = (
-            states_ptr + (pid_c - 1) * stride_states_chunk + pid_h * stride_states_head
-        )
-        prev_states_hdim = stride_states_hdim
-        prev_states_dstate = stride_states_dstate
-
     chunk_size_limit = chunk_seqlen_end - chunk_seqlen_start
 
     offs_n = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
@@ -303,24 +333,27 @@ def _chunk_scan_fwd_kernel(
             other=0.0,
         )
 
-        if not HAS_INITSTATES and (seq_idx != seq_idx_prev):
-            # if no init states AND starting a new sequence, we need zeros
-            prev_states = tl.zeros(
-                (BLOCK_SIZE_DSTATE, BLOCK_SIZE_N), dtype=C_ptr.dtype.element_ty
-            )
-        else:
-            # otherwise read the previous state
-            prev_states_ptrs = (
-                prev_states_ptr
-                + offs_n[None, :] * prev_states_hdim
-                + offs_k_dstate[:, None] * prev_states_dstate
-            )
-            prev_states = tl.load(
-                prev_states_ptrs,
-                mask=(offs_k_dstate[:, None] < dstate) & (offs_n[None, :] < hdim),
-                other=0.0,
-            )
-            prev_states = prev_states.to(C_ptr.dtype.element_ty)
+        prev_states = _load_previous_state(
+            states_ptr,
+            initstates_ptr,
+            pid_c,
+            pid_h,
+            seq_idx,
+            seq_idx != seq_idx_prev,
+            offs_n,
+            offs_k_dstate,
+            hdim,
+            dstate,
+            stride_states_chunk,
+            stride_states_head,
+            stride_states_hdim,
+            stride_states_dstate,
+            stride_init_states_batch,
+            stride_init_states_head,
+            stride_init_states_hdim,
+            stride_init_states_dstate,
+            HAS_INITSTATES,
+        ).to(C_ptr.dtype.element_ty)
 
         if IS_MUSA:
             acc = tl.dot(C.to(tl.float32), prev_states.to(tl.float32))
@@ -329,11 +362,6 @@ def _chunk_scan_fwd_kernel(
         acc *= scale_m[:, None]
 
     else:
-        prev_states_ptrs = (
-            prev_states_ptr
-            + offs_n[None, :] * prev_states_hdim
-            + offs_k_dstate[:, None] * prev_states_dstate
-        )
         for k in range(0, dstate, BLOCK_SIZE_K):
             C = tl.load(
                 C_ptrs,
@@ -341,24 +369,32 @@ def _chunk_scan_fwd_kernel(
                 & (offs_k_dstate[None, :] < dstate - k),
                 other=0.0,
             )
-            if not HAS_INITSTATES and (seq_idx != seq_idx_prev):
-                prev_states = tl.zeros(
-                    (BLOCK_SIZE_K, BLOCK_SIZE_N), dtype=C_ptr.dtype.element_ty
-                )
-            else:
-                prev_states = tl.load(
-                    prev_states_ptrs,
-                    mask=(offs_k_dstate[:, None] < dstate - k)
-                    & (offs_n[None, :] < hdim),
-                    other=0.0,
-                )
-                prev_states = prev_states.to(C_ptr.dtype.element_ty)
+            prev_states = _load_previous_state(
+                states_ptr,
+                initstates_ptr,
+                pid_c,
+                pid_h,
+                seq_idx,
+                seq_idx != seq_idx_prev,
+                offs_n,
+                offs_k_dstate + k,
+                hdim,
+                dstate,
+                stride_states_chunk,
+                stride_states_head,
+                stride_states_hdim,
+                stride_states_dstate,
+                stride_init_states_batch,
+                stride_init_states_head,
+                stride_init_states_hdim,
+                stride_init_states_dstate,
+                HAS_INITSTATES,
+            ).to(C_ptr.dtype.element_ty)
             if IS_MUSA:
                 acc += tl.dot(C.to(tl.float32), prev_states.to(tl.float32))
             else:
                 acc += tl.dot(C, prev_states)
             C_ptrs += BLOCK_SIZE_K
-            prev_states_ptrs += BLOCK_SIZE_K
         acc *= scale_m[:, None]
 
     offs_k = tl.arange(0, BLOCK_SIZE_K)

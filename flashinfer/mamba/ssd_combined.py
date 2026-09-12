@@ -1243,6 +1243,18 @@ def ssd_combined_fwd_varlen(
         )
     if (
         os.getenv("VLLM_MUSA_FLASHINFER_SSD", "0") == "1"
+        and chunk_size > 0
+        and chunk_size & (chunk_size - 1) == 0
+        and x.ndim == 3
+        and x.dtype in (torch.float16, torch.bfloat16)
+        and dt.ndim == 2
+        and A.ndim == 1
+        and dt_softplus
+        and dt_limit[0] >= 0
+        and cu_seqlens is not None
+        and cu_chunk_seqlens is not None
+        and last_chunk_indices is not None
+        and seq_idx is not None
         and checkpoint_token_indices is None
         and checkpoint_state_slots is None
         and checkpoint_states is None
