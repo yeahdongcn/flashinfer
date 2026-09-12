@@ -559,21 +559,15 @@ def ssd_combined_fwd_musa_reference(
         delta = delta.clamp(dt_limit[0], dt_limit[1])
         decay = torch.exp(A.to(torch.float32)[None, :, None, None] * delta[:, :, None, None])
         state = state * decay
-        for head in range(nheads):
-            group = head // ratio
-            state[:, head] += (
-                delta[:, head, None, None]
-                * x[:, token, head].to(torch.float32)[:, :, None]
-                * B[:, token, group].to(torch.float32)[:, None, :]
-            )
+        b_h = B[:, token].to(torch.float32).repeat_interleave(ratio, dim=1)
+        c_h = C[:, token].to(torch.float32).repeat_interleave(ratio, dim=1)
+        state += (
+            delta[:, :, None, None]
+            * x[:, token].to(torch.float32)[:, :, :, None]
+            * b_h[:, :, None, :]
+        )
         y = torch.empty(batch, nheads, headdim, dtype=torch.float32, device=x.device)
-        for head in range(nheads):
-            group = head // ratio
-            y[:, head] = torch.sum(
-                C[:, token, group].to(torch.float32)[:, None, :]
-                * state[:, head],
-                dim=-1,
-            )
+        y.copy_(torch.sum(c_h[:, :, None, :] * state, dim=-1))
         if d_head is not None:
             y = y + x[:, token].to(torch.float32) * d_head[None]
         if z is not None:
