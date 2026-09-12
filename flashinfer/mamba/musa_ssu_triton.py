@@ -1,8 +1,11 @@
 """Fused MUSA Triton selective state update kernel.
 
-This kernel intentionally covers the hot decode contract first: one token per
-request, tied-dimension dt, floating-point state, and no bias/softplus/z gate.
-Other contracts continue to use the correctness reference provider.
+The decode kernel tiles the head dimension inside each program.  A program
+therefore updates ``BLOCK_D`` dimensions while reducing the state dimension,
+which amortizes launch and address-calculation overhead for the small
+Nemotron decode shapes.  The private block-size hook is deliberately kept out
+of the public API so that hardware-specific tuning can be done without
+changing callers.
 """
 
 from __future__ import annotations
@@ -12,6 +15,27 @@ import triton
 import triton.language as tl
 
 from .musa_stochastic import cvt_rs_f16, philox4x32
+
+
+# Keep this as a small, private tuning hook.  The production default is chosen
+# for the N=128, D=64 Nemotron shape; tests and local tuning can change the
+# value without growing the public selective-state-update API.
+# Four D lanes keep the generated shared-memory footprint below the S5000
+# Triton limit for the production N=128 path. Larger values remain available
+# through the private sweep hook for kernels that fit their shape.
+_SSU_BLOCK_D = 4
+
+
+def _ssu_block_d(dim: int) -> int:
+    """Return the compile-time dimension tile used by the decode kernel."""
+    target = int(_SSU_BLOCK_D)
+    if target not in (4, 8, 16, 32):
+        target = 8
+    # Keep the tile in the tuned 4/8/16/32 set.  Small dimensions use a
+    # masked tail, which also keeps the generated kernel variants bounded.
+    if dim <= target:
+        return target
+    return target
 
 
 @triton.jit
@@ -69,86 +93,117 @@ def _ssu_one_token_kernel(
     SOFTPLUS: tl.constexpr,
     D_IS_VECTOR: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
     CACHE_SLOTS: tl.constexpr,
     USE_SR: tl.constexpr,
     PHILOX_ROUNDS: tl.constexpr,
     SR_GROUP: tl.constexpr,
 ):
     pid = tl.program_id(0)
-    hd = H * D
-    batch = pid // hd
-    rem = pid % hd
-    head = rem // D
-    dim = rem % D
+    tiles_per_head = (D + BLOCK_D - 1) // BLOCK_D
+    head_tiles = H * tiles_per_head
+    batch = pid // head_tiles
+    rem = pid % head_tiles
+    head = rem // tiles_per_head
+    dim_start = (rem % tiles_per_head) * BLOCK_D
+    dim = dim_start + tl.arange(0, BLOCK_D)
+    dim_mask = dim < D
     group = head * G // H
     src_slot = tl.load(src_slot_ptr + batch).to(tl.int64)
     dst_slot = tl.load(dst_slot_ptr + batch).to(tl.int64)
     src_valid = (src_slot >= 0) & (src_slot < CACHE_SLOTS) & (src_slot != pad_slot_id)
     dst_valid = (dst_slot >= 0) & (dst_slot < CACHE_SLOTS) & (dst_slot != pad_slot_id)
     n = tl.arange(0, BLOCK_N)
-    mask = n < N
+    n_mask = n < N
     state_offset = (
-        src_slot * state_slot_stride + head * state_h_stride + dim * state_d_stride
+        src_slot * state_slot_stride
+        + head * state_h_stride
+        + dim * state_d_stride
     )
     dst_state_offset = (
-        dst_slot * state_slot_stride + head * state_h_stride + dim * state_d_stride
+        dst_slot * state_slot_stride
+        + head * state_h_stride
+        + dim * state_d_stride
     )
     a_offset = head * a_h_stride + dim * a_d_stride
     bc_offset = batch * b_b_stride + group * b_g_stride
     s = tl.load(
-        state_ptr + state_offset + n * state_n_stride, mask=mask & src_valid, other=0.0
-    ).to(tl.float32)
-    a = tl.load(a_ptr + a_offset + n * a_n_stride, mask=mask, other=0.0).to(tl.float32)
-    b = tl.load(b_ptr + bc_offset + n * b_n_stride, mask=mask, other=0.0).to(tl.float32)
-    c = tl.load(
-        c_ptr + batch * c_b_stride + group * c_g_stride + n * c_n_stride,
-        mask=mask,
+        state_ptr + state_offset[:, None] + n[None, :] * state_n_stride,
+        mask=dim_mask[:, None] & n_mask[None, :] & src_valid,
         other=0.0,
     ).to(tl.float32)
-    x = tl.load(x_ptr + batch * x_b_stride + head * x_h_stride + dim * x_d_stride).to(
-        tl.float32
-    )
+    a = tl.load(
+        a_ptr + a_offset[:, None] + n[None, :] * a_n_stride,
+        mask=dim_mask[:, None] & n_mask[None, :],
+        other=0.0,
+    ).to(tl.float32)
+    b = tl.load(
+        b_ptr + bc_offset + n * b_n_stride, mask=n_mask, other=0.0
+    ).to(tl.float32)
+    c = tl.load(
+        c_ptr + batch * c_b_stride + group * c_g_stride + n * c_n_stride,
+        mask=n_mask,
+        other=0.0,
+    ).to(tl.float32)
+    x = tl.load(
+        x_ptr + batch * x_b_stride + head * x_h_stride + dim * x_d_stride,
+        mask=dim_mask,
+        other=0.0,
+    ).to(tl.float32)
     dt = tl.load(
-        dt_ptr + batch * dt_b_stride + head * dt_h_stride + dim * dt_d_stride
+        dt_ptr + batch * dt_b_stride + head * dt_h_stride + dim * dt_d_stride,
+        mask=dim_mask,
+        other=0.0,
     ).to(tl.float32)
     if HAS_BIAS:
-        bias_offset = (
-            head * bias_h_stride + dim * bias_d_stride
-            if BIAS_IS_MATRIX
-            else head * bias_h_stride
-        )
-        dt += tl.load(dt_bias_ptr + bias_offset).to(tl.float32)
+        if BIAS_IS_MATRIX:
+            bias_offset = head * bias_h_stride + dim * bias_d_stride
+            dt += tl.load(
+                dt_bias_ptr + bias_offset, mask=dim_mask, other=0.0
+            ).to(tl.float32)
+        else:
+            # A vector bias has one scalar per head; do not apply a D-lane
+            # mask to a scalar pointer (Triton 3.2 rejects that 1D/2D mix).
+            bias = tl.load(dt_bias_ptr + head * bias_h_stride).to(tl.float32)
+            dt += bias
     if SOFTPLUS:
         dt = tl.where(dt > 20.0, dt, tl.log(1.0 + tl.exp(dt)))
-    updated = s * tl.exp(a * dt) + (dt * b) * x
+    updated = s * tl.exp(a * dt[:, None]) + (dt[:, None] * b[None, :]) * x[:, None]
     stored_state = updated
     if USE_SR:
         seed = tl.load(rand_seed_ptr).to(tl.uint64)
-        offset = state_offset + (n // SR_GROUP * SR_GROUP) * state_n_stride
+        offset = state_offset[:, None] + (
+            n[None, :] // SR_GROUP * SR_GROUP
+        ) * state_n_stride
         r0, r1, r2, r3 = philox4x32(seed, offset, PHILOX_ROUNDS)
-        lane = n % SR_GROUP
+        lane = n[None, :] % SR_GROUP
         random_word = tl.where(
             lane == 0, r0, tl.where(lane == 1, r1, tl.where(lane == 2, r2, r3))
         )
         stored_state = cvt_rs_f16(updated, random_word).to(tl.float32)
     tl.store(
-        state_ptr + dst_state_offset + n * state_n_stride,
+        state_ptr + dst_state_offset[:, None] + n[None, :] * state_n_stride,
         stored_state,
-        mask=mask & dst_valid,
+        mask=dim_mask[:, None] & n_mask[None, :] & dst_valid,
     )
-    y = tl.sum(c * updated, axis=0)
-    d_offset = (
-        head * d_h_stride + dim * d_d_stride if not D_IS_VECTOR else head * d_h_stride
-    )
-    d = tl.load(d_ptr + d_offset).to(tl.float32)
+    y = tl.sum(c[None, :] * updated, axis=1)
+    if D_IS_VECTOR:
+        d = tl.load(d_ptr + head * d_h_stride).to(tl.float32)
+    else:
+        d_offset = head * d_h_stride + dim * d_d_stride
+        d = tl.load(d_ptr + d_offset, mask=dim_mask, other=0.0).to(tl.float32)
     y += d * x
     if HAS_Z:
         z = tl.load(
-            z_ptr + batch * z_b_stride + head * z_h_stride + dim * z_d_stride
+            z_ptr + batch * z_b_stride + head * z_h_stride + dim * z_d_stride,
+            mask=dim_mask,
+            other=0.0,
         ).to(tl.float32)
         y *= z / (1.0 + tl.exp(-z))
     tl.store(
-        out_ptr + batch * out_b_stride + head * out_h_stride + dim * out_d_stride, y
+        out_ptr + batch * out_b_stride + head * out_h_stride + dim * out_d_stride,
+        y,
+        mask=dim_mask,
     )
 
 
@@ -188,6 +243,7 @@ def ssu_one_token_musa_triton(
         if philox_rounds not in (5, 10):
             raise ValueError("stochastic fused SSU supports Philox 5 or 10 rounds")
     block_n = triton.next_power_of_2(dstate)
+    block_d = _ssu_block_d(dim)
     if dst_state_batch_indices is None:
         dst_state_batch_indices = state_batch_indices
     if dst_state_batch_indices.shape != state_batch_indices.shape:
@@ -206,7 +262,8 @@ def ssu_one_token_musa_triton(
         )
     if D.dim() not in (1, 2) or (dt_bias is not None and dt_bias.dim() not in (1, 2)):
         raise ValueError("MUSA fused SSU D and dt_bias must be rank 1 or 2")
-    _ssu_one_token_kernel[(batch * heads * dim,)](
+    tiles_per_head = (dim + block_d - 1) // block_d
+    _ssu_one_token_kernel[(batch * heads * tiles_per_head,)](
         state,
         x,
         dt,
@@ -262,6 +319,7 @@ def ssu_one_token_musa_triton(
         SOFTPLUS=dt_softplus,
         D_IS_VECTOR=D.dim() == 1,
         BLOCK_N=block_n,
+        BLOCK_D=block_d,
         CACHE_SLOTS=state.shape[0],
         USE_SR=rand_seed is not None,
         PHILOX_ROUNDS=philox_rounds,
