@@ -6,9 +6,14 @@ import triton.language as tl
 
 @triton.jit
 def philox4x32(seed, offset, rounds: tl.constexpr):
-    # The MUSA Triton 3.6 implementation preserves the high counter word for
-    # a 64-bit offset. Keeping this cast explicit prevents implicit narrowing.
-    return tl.randint4x(seed.to(tl.uint64), offset.to(tl.uint64), rounds)
+    # Triton 3.2 selects Philox4x64 for a uint64 randint4x offset, whereas
+    # 3.6 splits that offset into two Philox4x32 words. Select the 32-bit
+    # algorithm explicitly and retain both counter words and the full seed.
+    counter = offset.to(tl.uint64)
+    low = counter.to(tl.uint32)
+    high = (counter >> 32).to(tl.uint32)
+    zero = tl.full(low.shape, 0, tl.uint32)
+    return tl.philox(seed.to(tl.uint64), low, high, zero, zero, rounds)
 
 
 @triton.jit
