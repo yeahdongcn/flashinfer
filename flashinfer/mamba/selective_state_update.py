@@ -320,10 +320,15 @@ def selective_state_update(
             if dst_state_batch_indices is not None:
                 fused_dst_state_batch_indices = dst_state_batch_indices[:, -1].contiguous()
         pad_slot_unused = pad_slot_id is None or pad_slot_id < 0
-        if not pad_slot_unused:
+        if not pad_slot_unused and fused_state_batch_indices is not None:
             pad_slot_unused = not bool(
                 torch.any(fused_state_batch_indices == pad_slot_id).item()
             )
+        elif fused_state_batch_indices is None:
+            # Without an explicit index table the reference contract maps
+            # request ``b`` to state slot ``b``; there is no pad sentinel to
+            # inspect for the fused decode fast path.
+            pad_slot_unused = True
         if (
             (z is None or z.dim() == 3)
             and (dt_bias is None or dt_bias.dim() in (1, 2))
