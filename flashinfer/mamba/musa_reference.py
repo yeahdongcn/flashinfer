@@ -583,21 +583,41 @@ def ssd_combined_fwd_musa_reference(
                         checkpoint_states[slot].copy_(state[sequence].to(checkpoint_states.dtype))
 
         if seq_idx is None:
-                if state_scales is None:
-                    final.copy_(state.to(state_dtype))
-                else:
-                    qmax = 127 if state_dtype == torch.int8 else 32767 if state_dtype == torch.int16 else 448
-                    scale = torch.where(state.abs().amax(dim=-1) == 0, torch.ones_like(state.abs().amax(dim=-1)), state.abs().amax(dim=-1) / qmax)
-                    final.copy_((state / scale[..., None]).to(state_dtype))
-                    state_scales.copy_(scale)
+            if state_scales is None:
+                final.copy_(state.to(state_dtype))
+            else:
+                qmax = (
+                    127
+                    if state_dtype == torch.int8
+                    else 32767
+                    if state_dtype == torch.int16
+                    else 448
+                )
+                state_amax = state.abs().amax(dim=-1)
+                scale = torch.where(
+                    state_amax == 0, torch.ones_like(state_amax), state_amax / qmax
+                )
+                final.copy_((state / scale[..., None]).to(state_dtype))
+                state_scales.copy_(scale)
         else:
             for sequence in torch.unique(ids).tolist():
                 selected = state[ids == sequence][0]
                 if state_scales is None:
                     final[sequence].copy_(selected.to(state_dtype))
                 else:
-                    qmax = 127 if state_dtype == torch.int8 else 32767 if state_dtype == torch.int16 else 448
-                    scale = torch.where(selected.abs().amax(dim=-1) == 0, torch.ones_like(selected.abs().amax(dim=-1)), selected.abs().amax(dim=-1) / qmax)
+                    qmax = (
+                        127
+                        if state_dtype == torch.int8
+                        else 32767
+                        if state_dtype == torch.int16
+                        else 448
+                    )
+                    selected_amax = selected.abs().amax(dim=-1)
+                    scale = torch.where(
+                        selected_amax == 0,
+                        torch.ones_like(selected_amax),
+                        selected_amax / qmax,
+                    )
                     final[sequence].copy_((selected / scale[..., None]).to(state_dtype))
                     state_scales[sequence].copy_(scale)
                 seen[sequence] = True
