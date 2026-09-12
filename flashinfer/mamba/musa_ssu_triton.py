@@ -21,12 +21,19 @@ def _ssu_one_token_kernel(
     b_ptr,
     c_ptr,
     d_ptr,
+    dt_bias_ptr,
+    z_ptr,
     slot_ptr,
     out_ptr,
     H: tl.constexpr,
     D: tl.constexpr,
     N: tl.constexpr,
     G: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BIAS_IS_MATRIX: tl.constexpr,
+    HAS_Z: tl.constexpr,
+    SOFTPLUS: tl.constexpr,
+    D_IS_VECTOR: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
     pid = tl.program_id(0)
@@ -48,11 +55,21 @@ def _ssu_one_token_kernel(
     c = tl.load(c_ptr + bc_offset + n, mask=mask, other=0.0).to(tl.float32)
     x = tl.load(x_ptr + batch * H * D + head * D + dim).to(tl.float32)
     dt = tl.load(dt_ptr + batch * H * D + head * D + dim).to(tl.float32)
+    if HAS_BIAS:
+        bias_offset = head * D + dim if BIAS_IS_MATRIX else head
+        dt += tl.load(dt_bias_ptr + bias_offset).to(tl.float32)
+    if SOFTPLUS:
+        dt = tl.log(1.0 + tl.exp(dt))
     updated = s * tl.exp(a * dt) + (dt * x) * b
     tl.store(state_ptr + state_offset + n, updated, mask=mask)
     y = tl.sum(c * updated, axis=0)
-    d = tl.load(d_ptr + head * D + dim).to(tl.float32)
-    tl.store(out_ptr + batch * H * D + head * D + dim, y + d * x)
+    d_offset = head * D + dim if not D_IS_VECTOR else head
+    d = tl.load(d_ptr + d_offset).to(tl.float32)
+    y += d * x
+    if HAS_Z:
+        z = tl.load(z_ptr + batch * H * D + head * D + dim).to(tl.float32)
+        y *= z / (1.0 + tl.exp(-z))
+    tl.store(out_ptr + batch * H * D + head * D + dim, y)
 
 
 def ssu_one_token_musa_triton(
@@ -64,6 +81,9 @@ def ssu_one_token_musa_triton(
     C: torch.Tensor,
     D: torch.Tensor,
     state_batch_indices: torch.Tensor,
+    dt_bias: torch.Tensor | None = None,
+    z: torch.Tensor | None = None,
+    dt_softplus: bool = False,
 ) -> torch.Tensor:
     """Run the fused MUSA decode kernel for the supported contract."""
     batch, heads, dim = x.shape
@@ -79,12 +99,19 @@ def ssu_one_token_musa_triton(
         B,
         C,
         D,
+        dt_bias if dt_bias is not None else x,
+        z if z is not None else x,
         state_batch_indices,
         out,
         H=heads,
         D=dim,
         N=dstate,
         G=groups,
+        HAS_BIAS=dt_bias is not None,
+        BIAS_IS_MATRIX=dt_bias is not None and dt_bias.dim() == 2,
+        HAS_Z=z is not None,
+        SOFTPLUS=dt_softplus,
+        D_IS_VECTOR=D.dim() == 1,
         BLOCK_N=block_n,
     )
     return out

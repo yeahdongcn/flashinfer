@@ -314,9 +314,8 @@ def selective_state_update(
         if algorithm not in ("auto", "simple", "vertical", "horizontal", "async_horizontal"):
             raise ValueError(f"unknown MUSA SSU algorithm={algorithm!r}")
         if (
-            z is None
-            and dt_bias is None
-            and not dt_softplus
+            (z is None or z.dim() == 3)
+            and (dt_bias is None or dt_bias.dim() in (1, 2))
             and dst_state_batch_indices is None
             and intermediate_states_buffer is None
             and (pad_slot_id is None or pad_slot_id < 0)
@@ -328,7 +327,7 @@ def selective_state_update(
             and B.dim() == 3
             and C.dim() == 3
             and D is not None
-            and D.dim() == 2
+            and D.dim() in (1, 2)
             and state_batch_indices is not None
             and state_batch_indices.dim() == 1
             and x.shape[1] % B.shape[1] == 0
@@ -336,7 +335,17 @@ def selective_state_update(
             from .musa_ssu_triton import ssu_one_token_musa_triton
 
             return ssu_one_token_musa_triton(
-                state, x, dt, A, B, C, D, state_batch_indices
+                state,
+                x,
+                dt,
+                A,
+                B,
+                C,
+                D,
+                state_batch_indices,
+                dt_bias=dt_bias,
+                z=z,
+                dt_softplus=dt_softplus,
             )
         # The correctness provider has one recurrence implementation.  The
         # algorithm value remains accepted so callers can use the upstream
