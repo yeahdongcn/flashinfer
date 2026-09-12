@@ -727,7 +727,13 @@ def is_cvt_rs_supported(device: torch.device = None) -> bool:
     include/flashinfer/mamba/conversion.cuh (SM100_ALL || SM103_ALL).
     """
     if device is None:
-        device = torch.device("cuda")
+        # MUSA test processes keep CUDA unavailable by design.  Selecting the
+        # active accelerator here avoids querying CUDA device 0 during test
+        # collection when the caller omitted an explicit device.
+        if hasattr(torch.version, "musa") and torch.version.musa is not None:
+            device = torch.device("musa")
+        else:
+            device = torch.device("cuda")
     # Match the CUDA guard exactly: only the arches where cvt.rs actually
     # assembles (verified via ptxas).  NOT a `major == 10/11` check — SM110a
     # (major 11) has no `.rs` feature.
