@@ -316,11 +316,17 @@ def selective_state_update(
         fused_state_batch_indices = state_batch_indices
         fused_dst_state_batch_indices = dst_state_batch_indices
         fused_pad_slot_id = -1 if pad_slot_id is None else int(pad_slot_id)
-        state_indices_were_1d = (
-            state_batch_indices is not None and state_batch_indices.dim() == 1
+        state_indices_are_one_token = (
+            state_batch_indices is not None
+            and (
+                state_batch_indices.dim() == 1
+                or (state_batch_indices.dim() == 2 and state_batch_indices.shape[1] == 1)
+            )
         )
-        dst_indices_were_1d = (
-            dst_state_batch_indices is None or dst_state_batch_indices.dim() == 1
+        dst_indices_are_one_token = (
+            dst_state_batch_indices is None
+            or dst_state_batch_indices.dim() == 1
+            or (dst_state_batch_indices.dim() == 2 and dst_state_batch_indices.shape[1] == 1)
         )
         if (
             x.dim() == 3
@@ -329,8 +335,13 @@ def selective_state_update(
             and state_batch_indices.shape[1] == 1
         ):
             fused_state_batch_indices = state_batch_indices[:, -1].contiguous()
-            if dst_state_batch_indices is not None and dst_state_batch_indices.shape[1] == 1:
-                fused_dst_state_batch_indices = dst_state_batch_indices[:, -1].contiguous()
+        if (
+            x.dim() == 3
+            and dst_state_batch_indices is not None
+            and dst_state_batch_indices.dim() == 2
+            and dst_state_batch_indices.shape[1] == 1
+        ):
+            fused_dst_state_batch_indices = dst_state_batch_indices[:, -1].contiguous()
         if (
             (z is None or z.dim() == 3)
             and (dt_bias is None or dt_bias.dim() in (1, 2))
@@ -345,8 +356,8 @@ def selective_state_update(
             and cu_seqlens is None
             and state.dtype in (torch.float16, torch.bfloat16, torch.float32)
             and x.dim() == 3
-            and state_indices_were_1d
-            and dst_indices_were_1d
+            and state_indices_are_one_token
+            and dst_indices_are_one_token
             and state_batch_indices.numel() == x.shape[0]
             and (
                 dst_state_batch_indices is None
