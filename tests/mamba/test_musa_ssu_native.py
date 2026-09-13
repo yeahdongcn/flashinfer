@@ -96,6 +96,24 @@ def test_public_selective_state_update_routes_native():
     assert result.dtype == x.dtype
 
 
+def test_public_native_accepts_single_token_cu_seqlens():
+    torch.manual_seed(37)
+    state = torch.randn((2, 64, 64, 128), device="musa", dtype=torch.float16)
+    x = torch.randn((1, 64, 64), device="musa", dtype=torch.bfloat16)
+    dt = torch.randn((1, 64, 1), device="musa", dtype=torch.float32).expand(1, 64, 64)
+    a = (-torch.rand((64, 1, 1), device="musa", dtype=torch.float32)).expand(64, 64, 128)
+    b = torch.randn((1, 8, 128), device="musa", dtype=torch.bfloat16)
+    c = torch.randn_like(b)
+    d = torch.randn((64, 1), device="musa", dtype=torch.float32).expand(64, 64)
+    slot = torch.zeros((1,), device="musa", dtype=torch.int32)
+    cu_seqlens = torch.tensor([0, 1], device="musa", dtype=torch.int32)
+    result = selective_state_update(
+        state, x, dt, a, b, c, d, dt_softplus=True,
+        state_batch_indices=slot, cu_seqlens=cu_seqlens, backend="flashinfer",
+    )
+    assert result.shape == x.shape
+
+
 def test_native_public_stochastic_cache_matches_cpu_oracle():
     state = torch.zeros((2, 64, 64, 128), device="musa", dtype=torch.float16)
     x = torch.ones((1, 64, 64), device="musa", dtype=torch.bfloat16)

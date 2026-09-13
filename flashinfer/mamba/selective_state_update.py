@@ -379,7 +379,13 @@ def selective_state_update(
             )
             and num_accepted_tokens is None
             and not disable_state_update
-            and cu_seqlens is None
+            # vLLM's decode path supplies a two-entry query_start_loc even
+            # for one token. The Simple-STP kernel consumes the already
+            # flattened token tensors, so that metadata is safe to ignore.
+            and (
+                cu_seqlens is None
+                or (x.shape[0] == 1 and cu_seqlens.numel() == 2)
+            )
             and state.dtype in (torch.float16, torch.bfloat16, torch.float32)
             and state.dim() == 4
             and x.dim() == 3

@@ -19,6 +19,7 @@ from typing import Any
 from filelock import FileLock
 
 _EXT: Any | None = None
+_TORCH_LIB: Any | None = None
 _LOAD_LOCK = threading.RLock()
 _MODULE_NAME = "flashinfer_musa_simple_stp"
 
@@ -152,6 +153,62 @@ def _import_module(module_path: Path) -> Any:
     return module
 
 
+def _register_torch_op(extension: Any) -> None:
+    """Expose the mutating pybind kernel to Dynamo/MUSA graph capture."""
+    global _TORCH_LIB
+    if _TORCH_LIB is not None:
+        return
+    import torch
+
+    lib = torch.library.Library("flashinfer_musa", "DEF")
+    lib.define(
+        "simple_stp(Tensor(a!) state, Tensor x, Tensor dt, Tensor A, Tensor B, "
+        "Tensor C, Tensor D, Tensor src, Tensor dst, Tensor? dt_bias, Tensor? z, "
+        "bool dt_softplus, int pad_slot_id, Tensor? out, Tensor? rand_seed, "
+        "int philox_rounds) -> Tensor"
+    )
+
+    def impl(
+        state: Any,
+        x: Any,
+        dt: Any,
+        A: Any,
+        B: Any,
+        C: Any,
+        D: Any,
+        src: Any,
+        dst: Any,
+        dt_bias: Any,
+        z: Any,
+        dt_softplus: bool,
+        pad_slot_id: int,
+        out: Any,
+        rand_seed: Any,
+        philox_rounds: int,
+    ) -> Any:
+        return extension.musa_ssu_simple(
+            state,
+            x,
+            dt,
+            A,
+            B,
+            C,
+            D,
+            src,
+            dst,
+            dt_bias,
+            z,
+            dt_softplus,
+            pad_slot_id,
+            out,
+            rand_seed,
+            philox_rounds,
+        )
+
+    lib.impl("simple_stp", impl, "PrivateUse1")
+    _TORCH_LIB = lib
+
+
 def _load_extension() -> Any:
     global _EXT
     with _LOAD_LOCK:
@@ -183,12 +240,16 @@ def _load_extension() -> Any:
                 manifest.write_text(json.dumps({"fingerprint": fingerprint, "module": module_path.name}))
                 manifest.replace(artifact_dir / "manifest.json")
             _EXT = _import_module(module_path)
+            _register_torch_op(_EXT)
             return _EXT
 
 
 def musa_ssu_one_token_native(*args: Any, **kwargs: Any) -> Any:
     """Invoke the cached native S5000 Simple-STP extension."""
-    return _load_extension().musa_ssu_simple(*args, **kwargs)
+    _load_extension()
+    import torch
+
+    return torch.ops.flashinfer_musa.simple_stp(*args, **kwargs)
 
 
 def preload_musa_simple_stp() -> None:
