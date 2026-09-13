@@ -21,9 +21,9 @@ from .musa_ssd_helpers import fast_exp
 # Keep this as a small, private tuning hook.  The production default is chosen
 # for the N=128, D=64 Nemotron shape; tests and local tuning can change the
 # value without growing the public selective-state-update API.
-# Four D lanes keep the generated shared-memory footprint below the S5000
-# Triton limit for the production N=128 path. Larger values remain available
-# through the private sweep hook for kernels that fit their shape.
+# D16 is the direct-microbenchmark candidate for the production N=128 path;
+# D4/D8/D32 remain available through the private sweep hook when a different
+# shape or compiler limit favors them.
 _SSU_BLOCK_D = 16
 
 # Private launch tuning hook.  Triton currently defaults to four warps for
