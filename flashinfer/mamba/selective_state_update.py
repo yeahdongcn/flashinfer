@@ -431,7 +431,9 @@ def selective_state_update(
                         C,
                         D,
                         fused_state_batch_indices,
-                        fused_dst_state_batch_indices,
+                        fused_dst_state_batch_indices
+                        if fused_dst_state_batch_indices is not None
+                        else fused_state_batch_indices,
                         dt_bias,
                         z,
                         dt_softplus,
