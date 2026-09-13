@@ -33,19 +33,22 @@ def _load_extension() -> Any:
         source = Path(files("flashinfer.data").joinpath("csrc/mamba/musa_simple_stp.mu"))
     if not source.is_file():
         raise FileNotFoundError(source)
-    try:
-        from torch_musa.utils.musa_extension import MUSAExtension  # type: ignore[import-not-found]
-    except ImportError:
-        MUSAExtension = None
-    if MUSAExtension is None:
-        raise RuntimeError("torch_musa.utils.musa_extension is unavailable")
+    # vLLM-MUSA builds `.mu` sources through PyTorch's CUDAExtension shim;
+    # torch_musa patches that class in the runtime. Keep MUSAExtension as a
+    # fallback for images exposing the newer dedicated helper.
+    if importlib.util.find_spec("torch.utils.cpp_extension") is not None:
+        extension_import = "from torch.utils.cpp_extension import CUDAExtension as Extension, BuildExtension"
+    elif importlib.util.find_spec("torch_musa.utils.musa_extension") is not None:
+        extension_import = "from torch_musa.utils.musa_extension import MUSAExtension as Extension, BuildExtension"
+    else:
+        raise RuntimeError("no PyTorch MUSA extension builder is available")
     build_root = Path(tempfile.gettempdir()) / "flashinfer_musa_simple_stp"
     build_root.mkdir(parents=True, exist_ok=True)
     setup_py = build_root / "setup.py"
     setup_py.write_text(
         "from setuptools import setup\n"
-        "from torch_musa.utils.musa_extension import MUSAExtension, BuildExtension\n"
-        f"setup(name='flashinfer_musa_simple_stp', ext_modules=[MUSAExtension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args=['-O3', '-std=c++17'])], cmdclass={{'build_ext': BuildExtension}})\n"
+        f"{extension_import}\n"
+        f"setup(name='flashinfer_musa_simple_stp', ext_modules=[Extension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args=['-O3', '-std=c++17'])], cmdclass={{'build_ext': BuildExtension}})\n"
     )
     subprocess.run(
         [sys.executable, str(setup_py), "build_ext", "--inplace"],
