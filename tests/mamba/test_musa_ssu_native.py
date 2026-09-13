@@ -116,9 +116,10 @@ def test_native_public_stochastic_cache_matches_cpu_oracle():
     expected = []
     for head in range(64):
         bits = struct.unpack("<I", struct.pack("<f", 1.0))[0]
-        base = head * 64 * 128
-        for offset in range(0, 128, 4):
-            words = philox4x32_words(seed_value, base + offset, 5)
-            expected.extend(cvt_rs_f16_bits(bits, word) for word in words)
+        for d_idx in range(64):
+            base = head * 64 * 128 + d_idx * 128
+            for offset in range(0, 128, 4):
+                words = philox4x32_words(seed_value, base + offset, 5)
+                expected.extend(cvt_rs_f16_bits(bits, word) for word in words)
     actual = state[1].view(torch.int16).cpu().to(torch.int32).flatten() & 0xFFFF
     torch.testing.assert_close(actual, torch.tensor(expected, dtype=torch.int32))
