@@ -95,11 +95,11 @@ __device__ __forceinline__ float warp_sum(float x) {
   return x;
 }
 
-template <typename InT, typename IndexT, int ROUNDS>
+template <typename InT, typename DType, typename IndexT, int ROUNDS>
 __global__ void simple_stp_kernel(
     __half* __restrict__ state, const InT* __restrict__ x, const float* __restrict__ dt,
     const float* __restrict__ A, const InT* __restrict__ B, const InT* __restrict__ C,
-    const InT* __restrict__ Dv, const float* __restrict__ bias, const InT* __restrict__ z,
+    const DType* __restrict__ Dv, const float* __restrict__ bias, const InT* __restrict__ z,
     const IndexT* __restrict__ src_slots, const IndexT* __restrict__ dst_slots,
     InT* __restrict__ out, const int64_t* __restrict__ seed,
     int64_t ss, int64_t sh, int64_t sd, int64_t sn,
@@ -168,9 +168,9 @@ __global__ void simple_stp_kernel(
   }
 }
 
-#define LAUNCH(IN, IDX, R, HB, BM, HZ, SP, DV, TH, SR) \
-  simple_stp_kernel<IN, IDX, R> \
-    <<<1024, kThreads, 0, stream>>>(reinterpret_cast<__half*>(state.data_ptr()), reinterpret_cast<const IN*>(x.data_ptr()), reinterpret_cast<const float*>(dt.data_ptr()), reinterpret_cast<const float*>(A.data_ptr()), reinterpret_cast<const IN*>(B.data_ptr()), reinterpret_cast<const IN*>(C.data_ptr()), reinterpret_cast<const IN*>(Dv.data_ptr()), bias_ptr, reinterpret_cast<const IN*>(z_tensor.data_ptr()), reinterpret_cast<const IDX*>(src.data_ptr()), reinterpret_cast<const IDX*>(dst.data_ptr()), reinterpret_cast<IN*>(out.data_ptr()), seed_ptr, ss,sh,sd,sn,xb,xh,xd,dtb,dth,dtd,ah,ad,an,bb,bg,bn,cb,cg,cn,dh,dd,bh,bd,ob,oh,od,zb,zh,zd,pad_slot_id,state.size(0),HB,BM,HZ,SP,DV,TH,SR)
+#define LAUNCH(IN, DT, IDX, R, HB, BM, HZ, SP, DV, TH, SR) \
+  simple_stp_kernel<IN, DT, IDX, R> \
+    <<<1024, kThreads, 0, stream>>>(reinterpret_cast<__half*>(state.data_ptr()), reinterpret_cast<const IN*>(x.data_ptr()), reinterpret_cast<const float*>(dt.data_ptr()), reinterpret_cast<const float*>(A.data_ptr()), reinterpret_cast<const IN*>(B.data_ptr()), reinterpret_cast<const IN*>(C.data_ptr()), reinterpret_cast<const DT*>(Dv.data_ptr()), bias_ptr, reinterpret_cast<const IN*>(z_tensor.data_ptr()), reinterpret_cast<const IDX*>(src.data_ptr()), reinterpret_cast<const IDX*>(dst.data_ptr()), reinterpret_cast<IN*>(out.data_ptr()), seed_ptr, ss,sh,sd,sn,xb,xh,xd,dtb,dth,dtd,ah,ad,an,bb,bg,bn,cb,cg,cn,dh,dd,bh,bd,ob,oh,od,zb,zh,zd,pad_slot_id,state.size(0),HB,BM,HZ,SP,DV,TH,SR)
 
 }  // namespace
 
@@ -196,7 +196,7 @@ at::Tensor musa_ssu_simple(
   TORCH_CHECK(dt.stride(2) == 0, "native Simple STP requires tied dt head dimensions");
   TORCH_CHECK(dt.scalar_type() == at::kFloat && A.scalar_type() == at::kFloat, "dt and A must be fp32");
   TORCH_CHECK(src.numel() >= 1 && dst.numel() >= 1 && (src.scalar_type() == at::kInt || src.scalar_type() == at::kLong) && src.scalar_type() == dst.scalar_type(), "slot indices must be int32/int64");
-  TORCH_CHECK(Dv.scalar_type() == x.scalar_type() && ((Dv.dim() == 1 && Dv.size(0) == 64) || (Dv.dim() == 2 && Dv.size(0) == 64 && Dv.size(1) == 64)), "D must be [64] or [64,64]");
+  TORCH_CHECK((Dv.scalar_type() == x.scalar_type() || Dv.scalar_type() == at::kFloat) && ((Dv.dim() == 1 && Dv.size(0) == 64) || (Dv.dim() == 2 && Dv.size(0) == 64 && Dv.size(1) == 64)), "D must be [64] or [64,64]");
   auto out = out_opt.has_value() ? *out_opt : at::empty_like(x);
   TORCH_CHECK(out.scalar_type() == x.scalar_type() && out.sizes() == x.sizes(), "out must match x");
   TORCH_CHECK(!rand_seed.has_value() || (rand_seed->scalar_type() == at::kLong && rand_seed->numel() == 1 && state.scalar_type() == at::kHalf && (philox_rounds == 5 || philox_rounds == 10)), "invalid stochastic-rounding arguments");
@@ -213,8 +213,12 @@ at::Tensor musa_ssu_simple(
   const auto z_tensor = z.has_value() ? *z : x;
   const int64_t* seed_ptr = rand_seed.has_value() ? rand_seed->data_ptr<int64_t>() : nullptr;
   TORCH_CHECK(x.scalar_type() == at::kBFloat16, "native Simple STP currently requires BF16 x/output");
-#define LAUNCH_ROUND(IDX, R, SR) \
-  LAUNCH(__mt_bfloat16, IDX, R, dt_bias.has_value(), dt_bias.has_value() && dt_bias->dim()==2, z.has_value(), dt_softplus, Dv.dim()==1, A.stride(1)==0 && A.stride(2)==0, SR)
+#define LAUNCH_ROUND(IDX, R, SR) do { \
+  if (Dv.scalar_type() == at::kFloat) \
+    LAUNCH(__mt_bfloat16, float, IDX, R, dt_bias.has_value(), dt_bias.has_value() && dt_bias->dim()==2, z.has_value(), dt_softplus, Dv.dim()==1, A.stride(1)==0 && A.stride(2)==0, SR); \
+  else \
+    LAUNCH(__mt_bfloat16, __mt_bfloat16, IDX, R, dt_bias.has_value(), dt_bias.has_value() && dt_bias->dim()==2, z.has_value(), dt_softplus, Dv.dim()==1, A.stride(1)==0 && A.stride(2)==0, SR); \
+} while (0)
   if (src.scalar_type() == at::kInt) {
     if (rand_seed.has_value()) { if (philox_rounds == 5) LAUNCH_ROUND(int, 5, true); else LAUNCH_ROUND(int, 10, true); }
     else LAUNCH_ROUND(int, 10, false);
