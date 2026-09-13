@@ -170,7 +170,7 @@ __global__ void simple_stp_kernel(
 
 #define LAUNCH(IN, IDX, R, HB, BM, HZ, SP, DV, TH, SR) \
   simple_stp_kernel<IN, IDX, R> \
-    <<<1024, kThreads, 0, stream>>>(reinterpret_cast<__half*>(state.data_ptr()), reinterpret_cast<const IN*>(x.data_ptr()), reinterpret_cast<const float*>(dt.data_ptr()), reinterpret_cast<const float*>(A.data_ptr()), reinterpret_cast<const IN*>(B.data_ptr()), reinterpret_cast<const IN*>(C.data_ptr()), reinterpret_cast<const IN*>(Dv.data_ptr()), bias_ptr, reinterpret_cast<const IN*>(z_tensor.data_ptr()), reinterpret_cast<const IDX*>(src.data_ptr()), reinterpret_cast<const IDX*>(dst.data_ptr()), reinterpret_cast<IN*>(out.data_ptr()), seed_ptr, ss,sh,sd,sn,xb,xh,xd,dtb,dth,dtd,ah,ad,an,bb,bg,bn,cb,cg,cn,dh,dd,bh,bd,ob,oh,od,zb,zh,zd,pad,slots,HB,BM,HZ,SP,DV,TH,SR)
+    <<<1024, kThreads, 0, stream>>>(reinterpret_cast<__half*>(state.data_ptr()), reinterpret_cast<const IN*>(x.data_ptr()), reinterpret_cast<const float*>(dt.data_ptr()), reinterpret_cast<const float*>(A.data_ptr()), reinterpret_cast<const IN*>(B.data_ptr()), reinterpret_cast<const IN*>(C.data_ptr()), reinterpret_cast<const IN*>(Dv.data_ptr()), bias_ptr, reinterpret_cast<const IN*>(z_tensor.data_ptr()), reinterpret_cast<const IDX*>(src.data_ptr()), reinterpret_cast<const IDX*>(dst.data_ptr()), reinterpret_cast<IN*>(out.data_ptr()), seed_ptr, ss,sh,sd,sn,xb,xh,xd,dtb,dth,dtd,ah,ad,an,bb,bg,bn,cb,cg,cn,dh,dd,bh,bd,ob,oh,od,zb,zh,zd,pad_slot_id,state.size(0),HB,BM,HZ,SP,DV,TH,SR)
 
 }  // namespace
 
