@@ -24,7 +24,7 @@ from .musa_ssd_helpers import fast_exp
 # Four D lanes keep the generated shared-memory footprint below the S5000
 # Triton limit for the production N=128 path. Larger values remain available
 # through the private sweep hook for kernels that fit their shape.
-_SSU_BLOCK_D = 4
+_SSU_BLOCK_D = 16
 
 
 def _ssu_block_d(dim: int) -> int:
