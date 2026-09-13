@@ -25,6 +25,7 @@ def _load_extension() -> Any:
         return _EXT
     if os.environ.get("FLASHINFER_MUSA_SIMPLE_STP_NATIVE") != "1":
         raise RuntimeError("native Simple STP is opt-in")
+    import torch_musa  # noqa: F401  # activates the MUSA PyTorch extension shim
     source = Path(__file__).resolve().parents[2] / "csrc" / "mamba" / "musa_simple_stp.mu"
     if not source.is_file():
         # Non-editable wheels install repository sources under flashinfer.data.
@@ -47,6 +48,7 @@ def _load_extension() -> Any:
     setup_py = build_root / "setup.py"
     setup_py.write_text(
         "from setuptools import setup\n"
+        "import torch_musa\n"
         f"{extension_import}\n"
         f"setup(name='flashinfer_musa_simple_stp', ext_modules=[Extension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args=['-O3', '-std=c++17'])], cmdclass={{'build_ext': BuildExtension}})\n"
     )
