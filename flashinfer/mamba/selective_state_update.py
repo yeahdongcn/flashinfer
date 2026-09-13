@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 import functools
+import os
 from typing import Optional
 
 import torch
@@ -418,6 +419,28 @@ def selective_state_update(
                 and state.shape[-1] == 128
                 and B.shape[1] == 8
             ):
+                if os.environ.get("FLASHINFER_MUSA_SIMPLE_STP_NATIVE") == "1":
+                    from .musa_ssu_native import musa_ssu_one_token_native
+
+                    return musa_ssu_one_token_native(
+                        state,
+                        x,
+                        dt,
+                        A,
+                        B,
+                        C,
+                        D,
+                        fused_state_batch_indices,
+                        fused_dst_state_batch_indices,
+                        dt_bias,
+                        z,
+                        dt_softplus,
+                        fused_pad_slot_id,
+                        out,
+                        rand_seed,
+                        philox_rounds,
+                    )
+
                 from .musa_ssu_simple import ssu_one_token_musa_simple
 
                 return ssu_one_token_musa_simple(
