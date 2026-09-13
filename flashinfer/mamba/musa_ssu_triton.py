@@ -15,6 +15,7 @@ import triton
 import triton.language as tl
 
 from .musa_stochastic import cvt_rs_f16, philox4x32
+from .musa_ssd_helpers import fast_exp
 
 
 # Keep this as a small, private tuning hook.  The production default is chosen
@@ -167,8 +168,8 @@ def _ssu_one_token_kernel(
             bias = tl.load(dt_bias_ptr + head * bias_h_stride).to(tl.float32)
             dt += bias
     if SOFTPLUS:
-        dt = tl.where(dt > 20.0, dt, tl.log(1.0 + tl.exp(dt)))
-    updated = s * tl.exp(a * dt[:, None]) + (dt[:, None] * b[None, :]) * x[:, None]
+        dt = tl.where(dt > 20.0, dt, tl.log(1.0 + fast_exp(dt)))
+    updated = s * fast_exp(a * dt[:, None]) + (dt[:, None] * b[None, :]) * x[:, None]
     stored_state = updated
     if USE_SR:
         seed = tl.load(rand_seed_ptr).to(tl.uint64)
@@ -199,7 +200,7 @@ def _ssu_one_token_kernel(
             mask=dim_mask,
             other=0.0,
         ).to(tl.float32)
-        y *= z / (1.0 + tl.exp(-z))
+        y *= z / (1.0 + fast_exp(-z))
     tl.store(
         out_ptr + batch * out_b_stride + head * out_h_stride + dim * out_d_stride,
         y,
