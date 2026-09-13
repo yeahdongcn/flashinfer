@@ -55,7 +55,7 @@ def _load_extension() -> Any:
         "from setuptools import setup\n"
         "import torch_musa\n"
         f"{extension_import}\n"
-        f"setup(name='flashinfer_musa_simple_stp', ext_modules=[Extension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args=['-O3', '-std=c++17'])], cmdclass={{'build_ext': BuildExtension}})\n"
+        f"setup(name='flashinfer_musa_simple_stp', ext_modules=[Extension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args={{'cxx': ['-O3', '-std=c++17'], 'mcc': ['-O3']}})], cmdclass={{'build_ext': BuildExtension}})\n"
     )
     build_env = os.environ.copy()
     if not build_env.get("CUDA_HOME"):
