@@ -408,6 +408,37 @@ def selective_state_update(
             and fused_state_batch_indices.dim() == 1
             and x.shape[1] % B.shape[1] == 0
         ):
+            # S5000's low-parallel Nemotron shape maps to the NVIDIA SM90
+            # Simple STP contract: four D rows per 128-thread CTA. Keep this
+            # shape-gated so every other MUSA shape retains the generic
+            # Triton provider.
+            if (
+                x.shape[0] == 1
+                and x.shape[1:] == (64, 64)
+                and state.shape[-1] == 128
+                and B.shape[1] == 8
+            ):
+                from .musa_ssu_simple import ssu_one_token_musa_simple
+
+                return ssu_one_token_musa_simple(
+                    state,
+                    x,
+                    dt,
+                    A,
+                    B,
+                    C,
+                    D,
+                    fused_state_batch_indices,
+                    dt_bias=dt_bias,
+                    z=z,
+                    dt_softplus=dt_softplus,
+                    pad_slot_id=fused_pad_slot_id,
+                    dst_state_batch_indices=fused_dst_state_batch_indices,
+                    out=out,
+                    rand_seed=rand_seed,
+                    philox_rounds=philox_rounds,
+                )
+
             from .musa_ssu_triton import ssu_one_token_musa_triton
 
             return ssu_one_token_musa_triton(
