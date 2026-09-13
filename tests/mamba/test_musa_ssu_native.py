@@ -40,3 +40,28 @@ def test_native_simple_stp_matches_triton():
     )
     torch.testing.assert_close(native_out, triton_out, atol=3e-2, rtol=3e-2)
     torch.testing.assert_close(native_state, triton_state, atol=3e-2, rtol=3e-2)
+
+
+def test_native_simple_stp_stochastic_matches_triton():
+    torch.manual_seed(29)
+    state = torch.randn((2, 64, 64, 128), device="musa", dtype=torch.float16)
+    x = torch.randn((1, 64, 64), device="musa", dtype=torch.bfloat16)
+    dt = torch.randn((1, 64, 1), device="musa", dtype=torch.float32).expand(1, 64, 64)
+    a = -torch.rand((64, 1, 1), device="musa", dtype=torch.float32).expand(64, 64, 128)
+    b = torch.randn((1, 8, 128), device="musa", dtype=torch.bfloat16)
+    c = torch.randn_like(b)
+    d = torch.randn((64,), device="musa", dtype=torch.bfloat16)
+    slot = torch.zeros((1,), device="musa", dtype=torch.int32)
+    seed = torch.tensor([9123], device="musa", dtype=torch.int64)
+    native_state, triton_state = state.clone(), state.clone()
+    native_out, triton_out = torch.empty_like(x), torch.empty_like(x)
+    musa_ssu_one_token_native(
+        native_state, x, dt, a, b, c, d, slot, slot, None, None, True, -1,
+        native_out, seed, 5,
+    )
+    ssu_one_token_musa_triton(
+        triton_state, x, dt, a, b, c, d, slot, dt_softplus=True,
+        out=triton_out, rand_seed=seed, philox_rounds=5,
+    )
+    torch.testing.assert_close(native_out, triton_out, atol=3e-2, rtol=3e-2)
+    torch.testing.assert_close(native_state, triton_state, atol=3e-2, rtol=3e-2)
