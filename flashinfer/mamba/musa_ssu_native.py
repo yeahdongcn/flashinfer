@@ -38,7 +38,12 @@ def _load_extension() -> Any:
     # torch_musa patches that class in the runtime. Keep MUSAExtension as a
     # fallback for images exposing the newer dedicated helper.
     if importlib.util.find_spec("torch.utils.cpp_extension") is not None:
-        extension_import = "from torch.utils.cpp_extension import CUDAExtension as Extension, BuildExtension"
+        extension_import = (
+            "import os\n"
+            "import torch.utils.cpp_extension as _cpp_extension\n"
+            "_cpp_extension.CUDA_HOME = os.environ.get('CUDA_HOME', '/usr/local/musa')\n"
+            "from torch.utils.cpp_extension import CUDAExtension as Extension, BuildExtension"
+        )
     elif importlib.util.find_spec("torch_musa.utils.musa_extension") is not None:
         extension_import = "from torch_musa.utils.musa_extension import MUSAExtension as Extension, BuildExtension"
     else:
