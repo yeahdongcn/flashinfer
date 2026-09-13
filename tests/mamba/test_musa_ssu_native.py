@@ -4,10 +4,12 @@ import os
 
 import pytest
 import torch
+import struct
 
 from flashinfer.mamba.musa_ssu_native import musa_ssu_one_token_native
 from flashinfer.mamba.musa_ssu_triton import ssu_one_token_musa_triton
 from flashinfer.mamba.selective_state_update import selective_state_update
+from .test_philox_cpu_oracle import cvt_rs_f16_bits, philox4x32_words
 
 pytestmark = [
     pytest.mark.skipif(
@@ -92,3 +94,31 @@ def test_public_selective_state_update_routes_native():
     )
     assert result.shape == x.shape
     assert result.dtype == x.dtype
+
+
+def test_native_public_stochastic_cache_matches_cpu_oracle():
+    state = torch.zeros((2, 64, 64, 128), device="musa", dtype=torch.float16)
+    x = torch.ones((1, 64, 64), device="musa", dtype=torch.bfloat16)
+    dt = torch.ones((1, 64, 1), device="musa", dtype=torch.float32).expand(1, 64, 64)
+    a = torch.zeros((64, 1, 1), device="musa", dtype=torch.float32).expand(64, 64, 128)
+    b = torch.ones((1, 8, 128), device="musa", dtype=torch.bfloat16)
+    c = torch.zeros_like(b)
+    d = torch.zeros((64, 1), device="musa", dtype=torch.float32).expand(64, 64)
+    src = torch.zeros((1,), device="musa", dtype=torch.int32)
+    dst = torch.ones((1,), device="musa", dtype=torch.int32)
+    seed_value = 42 + 2**40
+    seed = torch.tensor([seed_value], device="musa", dtype=torch.int64)
+    selective_state_update(
+        state, x, dt, a, b, c, d, state_batch_indices=src,
+        dst_state_batch_indices=dst, rand_seed=seed, philox_rounds=5,
+        dt_softplus=False, backend="flashinfer",
+    )
+    expected = []
+    for head in range(64):
+        bits = struct.unpack("<I", struct.pack("<f", 1.0))[0]
+        base = head * 64 * 128
+        for offset in range(0, 128, 4):
+            words = philox4x32_words(seed_value, base + offset, 5)
+            expected.extend(cvt_rs_f16_bits(bits, word) for word in words)
+    actual = state[1].view(torch.int16).cpu().to(torch.int32).flatten() & 0xFFFF
+    torch.testing.assert_close(actual, torch.tensor(expected, dtype=torch.int32))
