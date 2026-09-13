@@ -426,6 +426,13 @@ def selective_state_update(
                 and A.dtype == torch.float32
                 and D.dtype in (torch.float32, x.dtype)
                 and state.is_contiguous()
+                and all(t.device == state.device for t in (x, dt, A, B, C, D))
+                and (z is None or (z.dtype == x.dtype and z.device == state.device))
+                and (out is None or (out.dtype == x.dtype and out.device == state.device))
+                and (
+                    dt_bias is None
+                    or (dt_bias.dtype == torch.float32 and dt_bias.device == state.device)
+                )
                 and A.stride(1) == 0
                 and A.stride(2) == 0
                 and dt.stride(2) == 0
