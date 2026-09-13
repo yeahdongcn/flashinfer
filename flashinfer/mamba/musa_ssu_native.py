@@ -53,7 +53,8 @@ def _load_extension() -> Any:
         f"setup(name='flashinfer_musa_simple_stp', ext_modules=[Extension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args=['-O3', '-std=c++17'])], cmdclass={{'build_ext': BuildExtension}})\n"
     )
     build_env = os.environ.copy()
-    build_env.setdefault("CUDA_HOME", build_env.get("MUSA_HOME", "/usr/local/musa"))
+    if not build_env.get("CUDA_HOME"):
+        build_env["CUDA_HOME"] = build_env.get("MUSA_HOME", "/usr/local/musa")
     subprocess.run(
         [sys.executable, str(setup_py), "build_ext", "--inplace"],
         cwd=build_root,
