@@ -18,7 +18,8 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.parametrize("dim", [3, 17, 65])
 @pytest.mark.parametrize("vectors", [False, True])
-def test_dimension_tail_slots_and_strided_storage(dim, vectors):
+@pytest.mark.parametrize("tied_hdim", [False, True])
+def test_dimension_tail_slots_and_strided_storage(dim, vectors, tied_hdim):
     batch, heads, groups, n = 3, 4, 2, 96
     storage = torch.full(
         (4, heads, 2 * dim, 2 * n), 99.0, device="musa", dtype=torch.float16
@@ -26,13 +27,21 @@ def test_dimension_tail_slots_and_strided_storage(dim, vectors):
     state = storage[:, :, ::2, ::2]
     state.fill_(0.25)
     x = torch.full((batch, heads, dim), 0.5, device="musa", dtype=torch.bfloat16)
-    dt = torch.full_like(x, 0.125)
-    a = torch.zeros(heads, dim, n, device="musa")
+    if tied_hdim:
+        dt = torch.full((batch, heads, 1), 0.125, device="musa").expand_as(x)
+        a = torch.zeros(heads, 1, 1, device="musa").expand(heads, dim, n)
+    else:
+        dt = torch.full_like(x, 0.125)
+        a = torch.zeros(heads, dim, n, device="musa")
     b = torch.full((batch, groups, n), 0.5, device="musa", dtype=x.dtype)
     c = torch.full_like(b, 0.25)
     shape = (heads,) if vectors else (heads, dim)
-    skip = torch.full(shape, 0.5, device="musa")
-    bias = torch.full(shape, 0.25, device="musa")
+    if tied_hdim and not vectors:
+        skip = torch.full((heads, 1), 0.5, device="musa").expand(heads, dim)
+        bias = torch.full((heads, 1), 0.25, device="musa").expand(heads, dim)
+    else:
+        skip = torch.full(shape, 0.5, device="musa")
+        bias = torch.full(shape, 0.25, device="musa")
     src = torch.tensor([1, 1, -1], device="musa", dtype=torch.int32)
     dst = torch.tensor([2, -1, 3], device="musa", dtype=torch.int32)
     output_storage = torch.full(
