@@ -8,6 +8,8 @@
 
 from packaging import version
 
+import torch
+
 from .musa_ssd_helpers import fast_exp
 import triton
 import triton.language as tl
@@ -20,6 +22,29 @@ def is_musa_triton_32():
 
 
 def _ssd_autotune_configs():
+    # S5000 benefits from a single 128x128 output tile for the production
+    # Mamba2 shape (chunk=128, headdim=128, dstate=128).  The larger tile
+    # removes three inter-tile reductions while two-stage pipelining keeps
+    # register/shared-memory pressure below the 4-stage upstream candidate.
+    # Keep this candidate MUSA-only; CUDA/ROCm retain the upstream sweep.
+    if getattr(torch.version, "musa", None) is not None and not is_musa_triton_32():
+        return [
+            triton.Config(
+                {"BLOCK_SIZE_M": 128, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 32},
+                num_stages=2,
+                num_warps=8,
+            ),
+            triton.Config(
+                {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 32},
+                num_stages=2,
+                num_warps=8,
+            ),
+            triton.Config(
+                {"BLOCK_SIZE_M": 128, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 32},
+                num_stages=2,
+                num_warps=8,
+            ),
+        ]
     # MUSA Triton 3.2.x cannot compile the
     # broad upstream autotune search. Use a conservative tile only for that
     # stack while preserving CUDA/ROCm and newer Triton behavior.
