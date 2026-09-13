@@ -24,7 +24,20 @@ from .musa_ssd_helpers import fast_exp
 # Four D lanes keep the generated shared-memory footprint below the S5000
 # Triton limit for the production N=128 path. Larger values remain available
 # through the private sweep hook for kernels that fit their shape.
-_SSU_BLOCK_D = 4
+_SSU_BLOCK_D = 16
+
+# Private launch tuning hook.  Triton currently defaults to four warps for
+# this kernel; keeping the value explicit lets the direct MUSA sweep compare
+# four and eight warps without changing the public wrapper.
+_SSU_NUM_WARPS = 4
+
+
+def _ssu_num_warps(block_d: int) -> int:
+    """Return a valid private warp-count candidate for the tiled kernel."""
+    value = int(_SSU_NUM_WARPS)
+    if value not in (1, 2, 4, 8):
+        value = 4
+    return value
 
 
 def _ssu_block_d(dim: int) -> int:
@@ -354,6 +367,7 @@ def ssu_one_token_musa_triton(
                 or dt_bias.stride(1) == 0
             )
         ),
+        num_warps=_ssu_num_warps(block_d),
     )
     return out
 
