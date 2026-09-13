@@ -436,7 +436,6 @@ def selective_state_update(
                 )
             )
             if native_stp_contract:
-            ):
                 if os.environ.get("FLASHINFER_MUSA_SIMPLE_STP_NATIVE") == "1":
                     from .musa_ssu_native import musa_ssu_one_token_native
 

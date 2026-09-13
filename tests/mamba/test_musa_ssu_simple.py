@@ -52,7 +52,7 @@ def test_simple_stp_stochastic_matches_generic():
     state = torch.randn((2, 64, 64, 128), device="musa", dtype=torch.float16)
     x = torch.randn((1, 64, 64), device="musa", dtype=torch.bfloat16)
     dt = torch.randn((1, 64, 1), device="musa", dtype=torch.bfloat16).expand(1, 64, 64)
-    a = -torch.rand((64, 1, 1), device="musa", dtype=torch.bfloat16).expand(64, 64, 128)
+    a = (-torch.rand((64, 1, 1), device="musa", dtype=torch.bfloat16)).expand(64, 64, 128)
     b = torch.randn((1, 8, 128), device="musa", dtype=torch.bfloat16)
     c = torch.randn_like(b)
     d = torch.randn((64,), device="musa", dtype=torch.bfloat16)
