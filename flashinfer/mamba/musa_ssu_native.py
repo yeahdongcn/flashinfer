@@ -83,4 +83,9 @@ def musa_ssu_one_token_native(*args: Any, **kwargs: Any) -> Any:
     return _load_extension().musa_ssu_simple(*args, **kwargs)
 
 
-__all__ = ["musa_ssu_one_token_native"]
+def preload_musa_simple_stp() -> None:
+    """Build/import the extension before CUDA/MUSA graph capture begins."""
+    _load_extension()
+
+
+__all__ = ["musa_ssu_one_token_native", "preload_musa_simple_stp"]

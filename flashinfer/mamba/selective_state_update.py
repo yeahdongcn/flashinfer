@@ -413,11 +413,29 @@ def selective_state_update(
             # Simple STP contract: four D rows per 128-thread CTA. Keep this
             # shape-gated so every other MUSA shape retains the generic
             # Triton provider.
-            if (
+            native_stp_contract = (
                 x.shape[0] == 1
                 and x.shape[1:] == (64, 64)
                 and state.shape[-1] == 128
                 and B.shape[1] == 8
+                and state.dtype == torch.float16
+                and x.dtype == torch.bfloat16
+                and B.dtype == x.dtype
+                and C.dtype == x.dtype
+                and dt.dtype == torch.float32
+                and A.dtype == torch.float32
+                and D.dtype in (torch.float32, x.dtype)
+                and state.is_contiguous()
+                and A.stride(1) == 0
+                and A.stride(2) == 0
+                and dt.stride(2) == 0
+                and (
+                    dt_bias is None
+                    or dt_bias.dim() == 1
+                    or dt_bias.stride(1) == 0
+                )
+            )
+            if native_stp_contract:
             ):
                 if os.environ.get("FLASHINFER_MUSA_SIMPLE_STP_NATIVE") == "1":
                     from .musa_ssu_native import musa_ssu_one_token_native
@@ -748,3 +766,11 @@ def _selective_state_update_fake(
 ) -> None:
     """Fake implementation for torch.compile() meta tensor propagation."""
     pass
+
+
+# Build/import the opt-in native extension before vLLM starts graph capture.
+# Generic Triton/CUDA imports never execute this branch.
+if os.environ.get("FLASHINFER_MUSA_SIMPLE_STP_NATIVE") == "1":
+    from .musa_ssu_native import preload_musa_simple_stp
+
+    preload_musa_simple_stp()

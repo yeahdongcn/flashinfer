@@ -184,23 +184,30 @@ at::Tensor musa_ssu_simple(
   TORCH_CHECK(state.dim() == 4 && state.size(1) == 64 && state.size(2) == 64 && state.size(3) == 128,
               "native Simple STP requires state [slots,64,64,128]");
   TORCH_CHECK(x.dim() == 3 && x.size(0) == 1 && x.size(1) == 64 && x.size(2) == 64, "x must be [1,64,64]");
-  TORCH_CHECK(state.scalar_type() == at::kHalf && (x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf),
-              "state must be fp16 and x must be bf16/fp16");
-  TORCH_CHECK(state.stride(3) == 1, "native Simple STP requires contiguous N state vectors for packed uint2 traffic");
+  TORCH_CHECK(state.scalar_type() == at::kHalf && x.scalar_type() == at::kBFloat16,
+              "native Simple STP requires fp16 state and bf16 x");
+  TORCH_CHECK(state.is_contiguous(), "native Simple STP requires contiguous state for packed uint2 traffic");
   TORCH_CHECK(B.dim() == 3 && C.dim() == 3 && B.size(0) == 1 && B.size(1) == 8 && B.size(2) == 128 && C.sizes() == B.sizes(), "B/C must be [1,8,128]");
+  TORCH_CHECK(B.scalar_type() == x.scalar_type() && C.scalar_type() == x.scalar_type(), "B/C must match x dtype");
   TORCH_CHECK(dt.dim() == 3 && dt.size(0) == 1 && dt.size(1) == 64 && dt.size(2) == 64, "dt must be [1,64,64]");
   TORCH_CHECK(A.dim() == 3 && A.size(0) == 64 && A.size(1) == 64 && A.size(2) == 128, "A must be [64,64,128]");
-  // MUSA may materialize an expanded A view as a contiguous tensor. The
-  // fixed Nemotron contract still uses one scalar A per head; the kernel
-  // reads the first D/N element of that broadcast value.
   TORCH_CHECK(dt.scalar_type() == at::kFloat && A.scalar_type() == at::kFloat, "dt and A must be fp32");
+  TORCH_CHECK(A.stride(1) == 0 && A.stride(2) == 0 && dt.stride(2) == 0, "native Simple STP requires tied A/dt");
+  TORCH_CHECK(state.device() == x.device() && state.device() == dt.device() && state.device() == A.device() && state.device() == B.device() && state.device() == C.device(), "native inputs must share a MUSA device");
   TORCH_CHECK(src.numel() >= 1 && dst.numel() >= 1 && (src.scalar_type() == at::kInt || src.scalar_type() == at::kLong) && src.scalar_type() == dst.scalar_type(), "slot indices must be int32/int64");
   TORCH_CHECK((Dv.scalar_type() == x.scalar_type() || Dv.scalar_type() == at::kFloat) && ((Dv.dim() == 1 && Dv.size(0) == 64) || (Dv.dim() == 2 && Dv.size(0) == 64 && Dv.size(1) == 64)), "D must be [64] or [64,64]");
+  TORCH_CHECK(Dv.device() == state.device(), "D must be on the MUSA device");
   auto out = out_opt.has_value() ? *out_opt : at::empty_like(x);
   TORCH_CHECK(out.scalar_type() == x.scalar_type() && out.sizes() == x.sizes(), "out must match x");
+  TORCH_CHECK(out.device() == state.device(), "out must be on the MUSA device");
   TORCH_CHECK(!rand_seed.has_value() || (rand_seed->scalar_type() == at::kLong && rand_seed->numel() == 1 && state.scalar_type() == at::kHalf && (philox_rounds == 5 || philox_rounds == 10)), "invalid stochastic-rounding arguments");
   TORCH_CHECK(!dt_bias.has_value() || dt_bias->scalar_type() == at::kFloat, "dt_bias must be fp32");
+  TORCH_CHECK(!dt_bias.has_value() || dt_bias->device() == state.device(), "dt_bias must be on the MUSA device");
+  TORCH_CHECK(!dt_bias.has_value() || dt_bias->dim() == 1 || dt_bias->stride(1) == 0, "dt_bias must be tied over D");
   TORCH_CHECK(!z.has_value() || z->scalar_type() == x.scalar_type(), "z dtype must match x");
+  TORCH_CHECK(!z.has_value() || z->device() == state.device(), "z must be on the MUSA device");
+  TORCH_CHECK(src.device() == state.device() && dst.device() == state.device(), "indices must be on the MUSA device");
+  TORCH_CHECK(!rand_seed.has_value() || rand_seed->device() == state.device(), "rand_seed must be on the MUSA device");
   const c10::musa::OptionalMUSAGuard guard(device_of(state));
   musaStream_t stream = at::musa::getCurrentMUSAStream().stream();
   const int64_t ss=state.stride(0), sh=state.stride(1), sd=state.stride(2), sn=state.stride(3);
