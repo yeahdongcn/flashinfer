@@ -29,7 +29,7 @@ _SSU_BLOCK_D = 16
 # Private launch tuning hook.  Triton currently defaults to four warps for
 # this kernel; keeping the value explicit lets the direct MUSA sweep compare
 # four and eight warps without changing the public wrapper.
-_SSU_NUM_WARPS = 4
+_SSU_NUM_WARPS = 8
 
 
 def _ssu_num_warps(block_d: int) -> int:
