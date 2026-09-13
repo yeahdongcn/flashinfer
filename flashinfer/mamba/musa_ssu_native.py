@@ -52,11 +52,13 @@ def _load_extension() -> Any:
         f"{extension_import}\n"
         f"setup(name='flashinfer_musa_simple_stp', ext_modules=[Extension('flashinfer_musa_simple_stp', [{str(source)!r}], extra_compile_args=['-O3', '-std=c++17'])], cmdclass={{'build_ext': BuildExtension}})\n"
     )
+    build_env = os.environ.copy()
+    build_env.setdefault("CUDA_HOME", build_env.get("MUSA_HOME", "/usr/local/musa"))
     subprocess.run(
         [sys.executable, str(setup_py), "build_ext", "--inplace"],
         cwd=build_root,
         check=True,
-        env=os.environ.copy(),
+        env=build_env,
     )
     suffixes = importlib.machinery.EXTENSION_SUFFIXES
     candidates = [p for suffix in suffixes for p in build_root.glob(f"flashinfer_musa_simple_stp*{suffix}")]
