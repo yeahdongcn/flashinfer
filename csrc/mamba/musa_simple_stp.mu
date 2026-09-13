@@ -187,7 +187,9 @@ at::Tensor musa_ssu_simple(
   TORCH_CHECK(state.scalar_type() == at::kHalf && (x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf),
               "state must be fp16 and x must be bf16/fp16");
   TORCH_CHECK(state.stride(3) == 1, "native Simple STP requires contiguous N state vectors for packed uint2 traffic");
-  TORCH_CHECK(B.dim() == 3 && C.dim() == 3 && B.size(1) == 8 && B.size(2) == 128 && C.sizes() == B.sizes(), "B/C must be [1,8,128]");
+  TORCH_CHECK(B.dim() == 3 && C.dim() == 3 && B.size(0) == 1 && B.size(1) == 8 && B.size(2) == 128 && C.sizes() == B.sizes(), "B/C must be [1,8,128]");
+  TORCH_CHECK(dt.dim() == 3 && dt.size(0) == 1 && dt.size(1) == 64 && dt.size(2) == 64, "dt must be [1,64,64]");
+  TORCH_CHECK(A.dim() == 3 && A.size(0) == 64 && A.size(1) == 64 && A.size(2) == 128, "A must be [64,64,128]");
   TORCH_CHECK(dt.scalar_type() == at::kFloat && A.scalar_type() == at::kFloat, "dt and A must be fp32");
   TORCH_CHECK(src.numel() >= 1 && dst.numel() >= 1 && (src.scalar_type() == at::kInt || src.scalar_type() == at::kLong) && src.scalar_type() == dst.scalar_type(), "slot indices must be int32/int64");
   TORCH_CHECK(Dv.scalar_type() == x.scalar_type() && ((Dv.dim() == 1 && Dv.size(0) == 64) || (Dv.dim() == 2 && Dv.size(0) == 64 && Dv.size(1) == 64)), "D must be [64] or [64,64]");
