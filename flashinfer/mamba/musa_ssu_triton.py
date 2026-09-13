@@ -99,6 +99,7 @@ def _ssu_one_token_kernel(
     USE_SR: tl.constexpr,
     PHILOX_ROUNDS: tl.constexpr,
     SR_GROUP: tl.constexpr,
+    TIE_HDIM: tl.constexpr,
 ):
     pid = tl.program_id(0)
     tiles_per_head = (D + BLOCK_D - 1) // BLOCK_D
@@ -133,11 +134,17 @@ def _ssu_one_token_kernel(
         mask=dim_mask[:, None] & n_mask[None, :] & src_valid,
         other=0.0,
     ).to(tl.float32)
-    a = tl.load(
-        a_ptr + a_offset[:, None] + n[None, :] * a_n_stride,
-        mask=dim_mask[:, None] & n_mask[None, :],
-        other=0.0,
-    ).to(tl.float32)
+    if TIE_HDIM:
+        # Nemotron expands one A value per head, one dt value per token/head,
+        # and one bias value per head across D. Load each tied value once and
+        # let the D tile reuse it, matching vLLM's Triton fast path.
+        a = tl.load(a_ptr + head * a_h_stride).to(tl.float32)
+    else:
+        a = tl.load(
+            a_ptr + a_offset[:, None] + n[None, :] * a_n_stride,
+            mask=dim_mask[:, None] & n_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
     b = tl.load(
         b_ptr + bc_offset + n * b_n_stride, mask=n_mask, other=0.0
     ).to(tl.float32)
@@ -151,17 +158,25 @@ def _ssu_one_token_kernel(
         mask=dim_mask,
         other=0.0,
     ).to(tl.float32)
-    dt = tl.load(
-        dt_ptr + batch * dt_b_stride + head * dt_h_stride + dim * dt_d_stride,
-        mask=dim_mask,
-        other=0.0,
-    ).to(tl.float32)
+    if TIE_HDIM:
+        dt = tl.load(dt_ptr + batch * dt_b_stride + head * dt_h_stride).to(
+            tl.float32
+        )
+    else:
+        dt = tl.load(
+            dt_ptr + batch * dt_b_stride + head * dt_h_stride + dim * dt_d_stride,
+            mask=dim_mask,
+            other=0.0,
+        ).to(tl.float32)
     if HAS_BIAS:
         if BIAS_IS_MATRIX:
             bias_offset = head * bias_h_stride + dim * bias_d_stride
-            dt += tl.load(
-                dt_bias_ptr + bias_offset, mask=dim_mask, other=0.0
-            ).to(tl.float32)
+            if TIE_HDIM:
+                dt += tl.load(dt_bias_ptr + head * bias_h_stride).to(tl.float32)
+            else:
+                dt += tl.load(
+                    dt_bias_ptr + bias_offset, mask=dim_mask, other=0.0
+                ).to(tl.float32)
         else:
             # A vector bias has one scalar per head; do not apply a D-lane
             # mask to a scalar pointer (Triton 3.2 rejects that 1D/2D mix).
@@ -169,7 +184,11 @@ def _ssu_one_token_kernel(
             dt += bias
     if SOFTPLUS:
         dt = tl.where(dt > 20.0, dt, tl.log(1.0 + fast_exp(dt)))
-    updated = s * fast_exp(a * dt[:, None]) + (dt[:, None] * b[None, :]) * x[:, None]
+    if TIE_HDIM:
+        d_a = fast_exp(a * dt)
+        updated = s * d_a + (dt * b[None, :]) * x[:, None]
+    else:
+        updated = s * fast_exp(a * dt[:, None]) + (dt[:, None] * b[None, :]) * x[:, None]
     stored_state = updated
     if USE_SR:
         seed = tl.load(rand_seed_ptr).to(tl.uint64)
@@ -325,6 +344,8 @@ def ssu_one_token_musa_triton(
         USE_SR=rand_seed is not None,
         PHILOX_ROUNDS=philox_rounds,
         SR_GROUP=2 if dstate == 64 else 4,
+        TIE_HDIM=(A.stride(1) == 0 and A.stride(2) == 0 and dt.stride(2) == 0
+                  and (dt_bias is None or dt_bias.dim() == 1 or dt_bias.stride(1) == 0)),
     )
     return out
 
