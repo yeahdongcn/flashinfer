@@ -59,7 +59,11 @@ def test_simple_stp_stochastic_matches_generic():
     slot = torch.zeros((1,), device="musa", dtype=torch.int32)
     simple_state, generic_state = state.clone(), state.clone()
     simple_out, generic_out = torch.empty_like(x), torch.empty_like(x)
-    kwargs = {"dt_softplus": True, "rand_seed": 1234, "philox_rounds": 5}
+    kwargs = {
+        "dt_softplus": True,
+        "rand_seed": torch.tensor([1234], device="musa", dtype=torch.int64),
+        "philox_rounds": 5,
+    }
     ssu_one_token_musa_simple(simple_state, x, dt, a, b, c, d, slot, out=simple_out, **kwargs)
     ssu_one_token_musa_triton(generic_state, x, dt, a, b, c, d, slot, out=generic_out, **kwargs)
     torch.testing.assert_close(simple_out, generic_out, atol=2e-2, rtol=2e-2)
