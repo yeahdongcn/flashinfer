@@ -8,6 +8,8 @@
 
 from packaging import version
 
+import torch
+
 from .musa_ssd_helpers import fast_exp
 import triton
 import triton.language as tl
@@ -32,7 +34,7 @@ def _ssd_autotune_configs():
                 num_warps=2,
             )
         ]
-    return [
+    configs = [
         # =================================================================
         # Higher warp count configs for better latency hiding
         # More warps = more instructions in flight = better memory latency hiding
@@ -159,6 +161,15 @@ def _ssd_autotune_configs():
             num_warps=2,
         ),
     ]
+    if getattr(torch.version, "musa", None) is not None and not is_musa_triton_32():
+        configs = [
+            triton.Config(
+                {"BLOCK_SIZE_M": 128, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 32},
+                num_stages=2,
+                num_warps=8,
+            )
+        ] + configs
+    return configs
 
 
 @triton.jit
