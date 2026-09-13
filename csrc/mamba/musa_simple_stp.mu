@@ -190,7 +190,10 @@ at::Tensor musa_ssu_simple(
   TORCH_CHECK(B.dim() == 3 && C.dim() == 3 && B.size(0) == 1 && B.size(1) == 8 && B.size(2) == 128 && C.sizes() == B.sizes(), "B/C must be [1,8,128]");
   TORCH_CHECK(dt.dim() == 3 && dt.size(0) == 1 && dt.size(1) == 64 && dt.size(2) == 64, "dt must be [1,64,64]");
   TORCH_CHECK(A.dim() == 3 && A.size(0) == 64 && A.size(1) == 64 && A.size(2) == 128, "A must be [64,64,128]");
-  TORCH_CHECK(A.stride(1) == 0 && A.stride(2) == 0 && dt.stride(2) == 0, "native Simple STP requires tied A and dt head dimensions");
+  // MUSA may materialize an expanded A view as a contiguous tensor. The
+  // fixed Nemotron contract still uses one scalar A per head; the kernel
+  // reads the first D/N element of that broadcast value.
+  TORCH_CHECK(dt.stride(2) == 0, "native Simple STP requires tied dt head dimensions");
   TORCH_CHECK(dt.scalar_type() == at::kFloat && A.scalar_type() == at::kFloat, "dt and A must be fp32");
   TORCH_CHECK(src.numel() >= 1 && dst.numel() >= 1 && (src.scalar_type() == at::kInt || src.scalar_type() == at::kLong) && src.scalar_type() == dst.scalar_type(), "slot indices must be int32/int64");
   TORCH_CHECK(Dv.scalar_type() == x.scalar_type() && ((Dv.dim() == 1 && Dv.size(0) == 64) || (Dv.dim() == 2 && Dv.size(0) == 64 && Dv.size(1) == 64)), "D must be [64] or [64,64]");
