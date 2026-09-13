@@ -344,8 +344,16 @@ def ssu_one_token_musa_triton(
         USE_SR=rand_seed is not None,
         PHILOX_ROUNDS=philox_rounds,
         SR_GROUP=2 if dstate == 64 else 4,
-        TIE_HDIM=(A.stride(1) == 0 and A.stride(2) == 0 and dt.stride(2) == 0
-                  and (dt_bias is None or dt_bias.dim() == 1 or dt_bias.stride(1) == 0)),
+        TIE_HDIM=(
+            A.stride(1) == 0
+            and A.stride(2) == 0
+            and dt.stride(2) == 0
+            and (
+                dt_bias is None
+                or dt_bias.dim() == 1
+                or dt_bias.stride(1) == 0
+            )
+        ),
     )
     return out
 
