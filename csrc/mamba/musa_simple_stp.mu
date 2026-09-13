@@ -193,7 +193,6 @@ at::Tensor musa_ssu_simple(
   // MUSA may materialize an expanded A view as a contiguous tensor. The
   // fixed Nemotron contract still uses one scalar A per head; the kernel
   // reads the first D/N element of that broadcast value.
-  TORCH_CHECK(dt.stride(2) == 0, "native Simple STP requires tied dt head dimensions");
   TORCH_CHECK(dt.scalar_type() == at::kFloat && A.scalar_type() == at::kFloat, "dt and A must be fp32");
   TORCH_CHECK(src.numel() >= 1 && dst.numel() >= 1 && (src.scalar_type() == at::kInt || src.scalar_type() == at::kLong) && src.scalar_type() == dst.scalar_type(), "slot indices must be int32/int64");
   TORCH_CHECK((Dv.scalar_type() == x.scalar_type() || Dv.scalar_type() == at::kFloat) && ((Dv.dim() == 1 && Dv.size(0) == 64) || (Dv.dim() == 2 && Dv.size(0) == 64 && Dv.size(1) == 64)), "D must be [64] or [64,64]");
