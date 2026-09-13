@@ -23,6 +23,11 @@ def _load_extension() -> Any:
         raise RuntimeError("native Simple STP is opt-in")
     source = Path(__file__).resolve().parents[2] / "csrc" / "mamba" / "musa_simple_stp.mu"
     if not source.is_file():
+        # Non-editable wheels install repository sources under flashinfer.data.
+        from importlib.resources import files
+
+        source = Path(files("flashinfer.data").joinpath("csrc/mamba/musa_simple_stp.mu"))
+    if not source.is_file():
         raise FileNotFoundError(source)
     loader = None
     with suppress(ImportError):
